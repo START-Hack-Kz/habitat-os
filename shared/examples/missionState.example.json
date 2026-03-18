@@ -1,0 +1,188 @@
+{
+  "missionId": "mars-mission-alpha-01",
+  "missionDay": 87,
+  "missionDurationTotal": 450,
+  "crewSize": 4,
+  "status": "warning",
+  "lastUpdated": "2026-03-18T14:00:00Z",
+  "zones": [
+    {
+      "zoneId": "zone-A",
+      "cropType": "lettuce",
+      "areaM2": 10,
+      "growthDay": 18,
+      "growthCycleTotal": 35,
+      "growthProgressPercent": 51.4,
+      "status": "stressed",
+      "projectedYieldKg": 28.5,
+      "allocationPercent": 20,
+      "sensors": {
+        "temperature": 23.8,
+        "humidity": 58,
+        "co2Ppm": 950,
+        "lightPAR": 200,
+        "photoperiodHours": 16,
+        "nutrientPH": 6.1,
+        "electricalConductivity": 1.8,
+        "soilMoisture": 62
+      },
+      "stress": {
+        "active": true,
+        "type": "heat",
+        "severity": "moderate",
+        "boltingRisk": true,
+        "symptoms": ["leaf_tip_burn", "accelerated_growth_cycle"]
+      }
+    },
+    {
+      "zoneId": "zone-B",
+      "cropType": "potato",
+      "areaM2": 20,
+      "growthDay": 45,
+      "growthCycleTotal": 90,
+      "growthProgressPercent": 50.0,
+      "status": "healthy",
+      "projectedYieldKg": 120.0,
+      "allocationPercent": 40,
+      "sensors": {
+        "temperature": 18.5,
+        "humidity": 65,
+        "co2Ppm": 950,
+        "lightPAR": 300,
+        "photoperiodHours": 16,
+        "nutrientPH": 5.8,
+        "electricalConductivity": 2.1,
+        "soilMoisture": 78
+      },
+      "stress": {
+        "active": false,
+        "type": "none",
+        "severity": "none",
+        "boltingRisk": false,
+        "symptoms": []
+      }
+    },
+    {
+      "zoneId": "zone-C",
+      "cropType": "beans",
+      "areaM2": 12,
+      "growthDay": 30,
+      "growthCycleTotal": 60,
+      "growthProgressPercent": 50.0,
+      "status": "healthy",
+      "projectedYieldKg": 28.8,
+      "allocationPercent": 30,
+      "sensors": {
+        "temperature": 21.0,
+        "humidity": 63,
+        "co2Ppm": 950,
+        "lightPAR": 220,
+        "photoperiodHours": 16,
+        "nutrientPH": 6.2,
+        "electricalConductivity": 1.9,
+        "soilMoisture": 72
+      },
+      "stress": {
+        "active": false,
+        "type": "none",
+        "severity": "none",
+        "boltingRisk": false,
+        "symptoms": []
+      }
+    },
+    {
+      "zoneId": "zone-D",
+      "cropType": "radish",
+      "areaM2": 5,
+      "growthDay": 12,
+      "growthCycleTotal": 25,
+      "growthProgressPercent": 48.0,
+      "status": "healthy",
+      "projectedYieldKg": 12.0,
+      "allocationPercent": 10,
+      "sensors": {
+        "temperature": 19.0,
+        "humidity": 61,
+        "co2Ppm": 950,
+        "lightPAR": 180,
+        "photoperiodHours": 16,
+        "nutrientPH": 6.0,
+        "electricalConductivity": 1.6,
+        "soilMoisture": 70
+      },
+      "stress": {
+        "active": false,
+        "type": "none",
+        "severity": "none",
+        "boltingRisk": false,
+        "symptoms": []
+      }
+    }
+  ],
+  "resources": {
+    "waterReservoirL": 4200,
+    "waterRecyclingEfficiency": 60,
+    "waterDailyConsumptionL": 140,
+    "waterDaysRemaining": 30,
+    "energyAvailableKwh": 320,
+    "energyConsumptionKwhPerDay": 210,
+    "solarGenerationKwhPerDay": 195,
+    "energyDaysRemaining": 21,
+    "nutrientN": 150,
+    "nutrientP": 50,
+    "nutrientK": 200
+  },
+  "nutrition": {
+    "dailyCaloriesProduced": 9500,
+    "dailyCaloriesTarget": 12000,
+    "caloricCoveragePercent": 79,
+    "dailyProteinG": 310,
+    "dailyProteinTarget": 450,
+    "proteinCoveragePercent": 69,
+    "vitaminAAdequate": true,
+    "vitaminCAdequate": true,
+    "vitaminKAdequate": true,
+    "folateAdequate": false,
+    "nutritionalCoverageScore": 74,
+    "daysSafe": 38,
+    "trend": "declining"
+  },
+  "activeScenario": {
+    "scenarioId": "scen-001",
+    "scenarioType": "water_recycling_decline",
+    "severity": "critical",
+    "injectedAt": "2026-03-18T13:45:00Z",
+    "affectedZones": ["zone-A", "zone-B", "zone-C", "zone-D"],
+    "parameterOverrides": {
+      "waterRecyclingEfficiency": 60,
+      "waterDailyConsumptionL": 140
+    },
+    "description": "Water recycling efficiency has dropped to 60% due to filter degradation. Net water loss is accelerating."
+  },
+  "eventLog": [
+    {
+      "eventId": "evt-009",
+      "missionDay": 87,
+      "timestamp": "2026-03-18T13:45:00Z",
+      "type": "critical",
+      "message": "Water recycling efficiency dropped to 60%. Irrigation rationing activated.",
+      "zoneId": null
+    },
+    {
+      "eventId": "evt-008",
+      "missionDay": 87,
+      "timestamp": "2026-03-18T12:00:00Z",
+      "type": "warning",
+      "message": "Zone-A temperature reached 23.8°C. Bolting risk elevated for lettuce.",
+      "zoneId": "zone-A"
+    },
+    {
+      "eventId": "evt-007",
+      "missionDay": 86,
+      "timestamp": "2026-03-17T08:00:00Z",
+      "type": "info",
+      "message": "Zone-D radish on track for harvest in 13 days.",
+      "zoneId": "zone-D"
+    }
+  ]
+}

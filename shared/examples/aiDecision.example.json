@@ -1,0 +1,67 @@
+{
+  "decisionId": "dec-001",
+  "missionDay": 87,
+  "timestamp": "2026-03-18T14:02:00Z",
+  "riskLevel": "high",
+  "riskSummary": "Water recycling failure is reducing available irrigation by 40%. At current rates, zone-B (potato) will experience water deficit within 8 days, threatening 60% of the crew's caloric supply.",
+  "criticalNutrientDependencies": [
+    "zone-B (potato) provides ~60% of daily caloric output — caloric backbone",
+    "zone-C (beans) provides 100% of plant-based protein — protein security",
+    "zone-A (lettuce) provides Vitamin K, A, and folate — micronutrient stabilizer"
+  ],
+  "nutritionPreservationMode": true,
+  "triggeredByScenario": "scen-001",
+  "kbContextUsed": true,
+  "recommendedActions": [
+    {
+      "actionId": "act-001",
+      "actionType": "reallocate_water",
+      "urgency": "immediate",
+      "targetZoneId": null,
+      "description": "Reduce water allocation to zone-A (lettuce) from 20% to 10% and zone-D (radish) from 10% to 5%. Redirect saved water to zone-B (potato) and zone-C (beans).",
+      "parameterChanges": {
+        "zone-A.allocationPercent": 10,
+        "zone-D.allocationPercent": 5,
+        "zone-B.allocationPercent": 50,
+        "zone-C.allocationPercent": 35
+      },
+      "nutritionImpact": "Protects caloric backbone (potato) and protein supply (beans). Estimated caloric coverage maintained at 76% vs projected drop to 41%.",
+      "tradeoff": "Lettuce zone will experience moderate water stress. Vitamin K and folate output will decrease by ~30%. Radish harvest may be delayed by 4–5 days."
+    },
+    {
+      "actionId": "act-002",
+      "actionType": "reduce_lighting",
+      "urgency": "within_24h",
+      "targetZoneId": "zone-A",
+      "description": "Reduce PAR intensity in zone-A from 200 to 150 µmol/m²/s to lower evapotranspiration and reduce water demand.",
+      "parameterChanges": {
+        "zone-A.sensors.lightPAR": 150,
+        "zone-A.sensors.photoperiodHours": 14
+      },
+      "nutritionImpact": "Reduces zone-A water consumption by ~15%, extending water runway by 3 days.",
+      "tradeoff": "Lettuce growth rate will slow by ~10%. Minor reduction in Vitamin A output."
+    }
+  ],
+  "comparison": {
+    "before": {
+      "caloricCoveragePercent": 79,
+      "proteinCoveragePercent": 69,
+      "nutritionalCoverageScore": 74,
+      "daysSafe": 38
+    },
+    "after": {
+      "caloricCoveragePercent": 76,
+      "proteinCoveragePercent": 67,
+      "nutritionalCoverageScore": 71,
+      "daysSafe": 52
+    },
+    "delta": {
+      "caloricCoverageDelta": -3,
+      "proteinCoverageDelta": -2,
+      "scoreDelta": -3,
+      "daysSafeDelta": 14
+    },
+    "summary": "Applying these actions costs 3 points of nutritional coverage score but extends crew nutrition safety by 14 days. Without intervention, daysSafe drops to 12 within the week."
+  },
+  "explanation": "Water recycling failure is draining the reservoir faster than solar generation can compensate. I've activated Nutrition Preservation Mode and redirected water away from low-calorie crops (lettuce, radish) toward the caloric backbone (potato) and protein supply (beans). This costs some micronutrient output but keeps the crew fed for 14 more days. The tradeoff is deliberate: calories and protein are mission-critical; Vitamin K deficiency is tolerable short-term."
+}

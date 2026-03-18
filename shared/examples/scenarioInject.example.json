@@ -1,0 +1,10 @@
+{
+  "_comment": "Example: inject a critical water recycling failure with a custom override",
+  "scenarioType": "water_recycling_decline",
+  "severity": "critical",
+  "affectedZones": ["zone-A", "zone-B", "zone-C", "zone-D"],
+  "customOverrides": {
+    "waterRecyclingEfficiency": 55,
+    "waterDailyConsumptionL": 155
+  }
+}

@@ -1,0 +1,124 @@
+// MissionState — top-level snapshot of the greenhouse mission.
+// This is the primary object rendered by the dashboard and passed to the AI agent.
+
+export type MissionStatus = "nominal" | "warning" | "critical" | "nutrition_preservation_mode";
+export type CropType = "lettuce" | "potato" | "beans" | "radish";
+export type ZoneStatus = "healthy" | "stressed" | "critical" | "harvesting" | "replanting" | "offline";
+export type StressType = "none" | "heat" | "cold" | "water_deficit" | "nitrogen_deficiency" | "light_deficit" | "energy_shortage" | "salinity";
+export type StressSeverity = "none" | "low" | "moderate" | "high" | "critical";
+export type ScenarioType = "water_recycling_decline" | "energy_budget_reduction" | "temperature_control_failure";
+export type ScenarioSeverity = "mild" | "moderate" | "critical";
+export type EventType = "info" | "warning" | "critical" | "ai_action" | "scenario_injected" | "harvest" | "replant";
+export type NutritionTrend = "improving" | "stable" | "declining";
+
+// ─── Sensor readings per zone ───────────────────────────────────────────────
+
+export interface ZoneSensors {
+  temperature: number;          // °C
+  humidity: number;             // % relative humidity
+  co2Ppm: number;               // ppm
+  lightPAR: number;             // µmol/m²/s
+  photoperiodHours: number;     // daily light hours
+  nutrientPH: number;           // pH
+  electricalConductivity: number; // mS/cm (salinity proxy)
+  soilMoisture: number;         // % root zone moisture
+}
+
+// ─── Stress state per zone ───────────────────────────────────────────────────
+
+export interface StressState {
+  active: boolean;
+  type: StressType;
+  severity: StressSeverity;
+  boltingRisk: boolean;         // lettuce-specific: premature flowering risk
+  symptoms: string[];           // e.g. ["leaf_wilting", "slowed_growth"]
+}
+
+// ─── Crop zone ───────────────────────────────────────────────────────────────
+
+export interface CropZone {
+  zoneId: string;               // e.g. "zone-A"
+  cropType: CropType;
+  areaM2: number;               // m²
+  growthDay: number;            // days since planting
+  growthCycleTotal: number;     // expected days to harvest
+  growthProgressPercent: number; // growthDay / growthCycleTotal * 100
+  status: ZoneStatus;
+  sensors: ZoneSensors;
+  stress: StressState;
+  projectedYieldKg: number;     // estimated yield at harvest given current conditions
+  allocationPercent: number;    // % of shared resources allocated to this zone (0–100)
+}
+
+// ─── Resource state ──────────────────────────────────────────────────────────
+
+export interface ResourceState {
+  waterReservoirL: number;              // liters in reservoir
+  waterRecyclingEfficiency: number;     // % (target >85%)
+  waterDailyConsumptionL: number;       // L/day
+  waterDaysRemaining: number;           // derived: reservoir / net daily loss
+  energyAvailableKwh: number;           // kWh available
+  energyConsumptionKwhPerDay: number;   // kWh/day draw
+  solarGenerationKwhPerDay: number;     // kWh/day generated
+  energyDaysRemaining: number;          // derived: available / net daily deficit
+  nutrientN: number;                    // Nitrogen mg/L
+  nutrientP: number;                    // Phosphorus mg/L
+  nutrientK: number;                    // Potassium mg/L
+}
+
+// ─── Nutrition status ────────────────────────────────────────────────────────
+
+export interface NutritionStatus {
+  dailyCaloriesProduced: number;        // kcal/day from all zones
+  dailyCaloriesTarget: number;          // kcal/day needed (4 crew × 3000 = 12000)
+  caloricCoveragePercent: number;       // %
+  dailyProteinG: number;                // g/day produced
+  dailyProteinTarget: number;           // g/day needed (4 crew × ~112g = 450)
+  proteinCoveragePercent: number;       // %
+  vitaminAAdequate: boolean;
+  vitaminCAdequate: boolean;
+  vitaminKAdequate: boolean;
+  folateAdequate: boolean;
+  nutritionalCoverageScore: number;     // 0–100 weighted composite
+  daysSafe: number;                     // KEY METRIC: days crew stays adequately fed at current rate
+  trend: NutritionTrend;
+}
+
+// ─── Failure scenario ────────────────────────────────────────────────────────
+
+export interface FailureScenario {
+  scenarioId: string;
+  scenarioType: ScenarioType;
+  severity: ScenarioSeverity;
+  injectedAt: string;                   // ISO date-time
+  affectedZones: string[];              // zone IDs
+  parameterOverrides: Record<string, number>; // e.g. { waterRecyclingEfficiency: 60 }
+  description: string;                  // human-readable summary
+}
+
+// ─── Event log entry ─────────────────────────────────────────────────────────
+
+export interface EventLogEntry {
+  eventId: string;
+  missionDay: number;
+  timestamp: string;                    // ISO date-time
+  type: EventType;
+  message: string;
+  zoneId?: string;                      // optional — zone this event relates to
+}
+
+// ─── Top-level mission state ─────────────────────────────────────────────────
+
+export interface MissionState {
+  missionId: string;
+  missionDay: number;                   // current simulation day (1-indexed)
+  missionDurationTotal: number;         // 450
+  crewSize: number;                     // 4
+  status: MissionStatus;
+  zones: CropZone[];
+  resources: ResourceState;
+  nutrition: NutritionStatus;
+  activeScenario: FailureScenario | null;
+  eventLog: EventLogEntry[];            // newest first, capped at 20
+  lastUpdated: string;                  // ISO date-time
+}

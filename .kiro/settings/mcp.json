@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bedrock-agentcore": {
+      "url": "https://kb-start-hack-gateway-buyjtibfpg.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp",
+      "disabled": false,
+      "autoApprove": [
+        "kb-start-hack-target___knowledge_base_retrieve"
+      ]
+    }
+  }
+}
