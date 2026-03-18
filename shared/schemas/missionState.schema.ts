@@ -68,18 +68,35 @@ export interface ResourceState {
 
 // ─── Nutrition status ────────────────────────────────────────────────────────
 
+// Daily micronutrient intake for the full crew (produced vs target)
+export interface MicronutrientStatus {
+  produced: number;   // daily amount produced by all zones combined
+  target: number;     // daily crew requirement
+  unit: string;       // "mg" or "µg"
+  coveragePercent: number; // produced / target * 100
+}
+
 export interface NutritionStatus {
+  // ── Macros (crew totals per day) ────────────────────────────────────────
   dailyCaloriesProduced: number;        // kcal/day from all zones
-  dailyCaloriesTarget: number;          // kcal/day needed (4 crew × 3000 = 12000)
+  dailyCaloriesTarget: number;          // 12,000 kcal/day (4 crew × 3,000)
   caloricCoveragePercent: number;       // %
+
   dailyProteinG: number;                // g/day produced
-  dailyProteinTarget: number;           // g/day needed (4 crew × ~112g = 450)
+  dailyProteinTarget: number;           // ~450 g/day (4 crew × ~112g)
   proteinCoveragePercent: number;       // %
-  vitaminAAdequate: boolean;
-  vitaminCAdequate: boolean;
-  vitaminKAdequate: boolean;
-  folateAdequate: boolean;
-  nutritionalCoverageScore: number;     // 0–100 weighted composite
+
+  // ── Micronutrients (crew totals per day, KB-confirmed critical) ─────────
+  vitaminA: MicronutrientStatus;        // µg/day — from lettuce; vision, immune function
+  vitaminC: MicronutrientStatus;        // mg/day — from radish, potato; immune + cardiovascular
+  vitaminK: MicronutrientStatus;        // µg/day — from lettuce; bone health, blood clotting
+  folate: MicronutrientStatus;          // µg/day — from lettuce; cognitive performance, cell repair
+  iron: MicronutrientStatus;            // mg/day — from leafy greens/beans; oxygen transport
+  potassium: MicronutrientStatus;       // mg/day — from potato; cardiovascular stability
+  magnesium: MicronutrientStatus;       // mg/day — from leafy greens/beans; bone + energy metabolism
+
+  // ── Composite score & forecast ──────────────────────────────────────────
+  nutritionalCoverageScore: number;     // 0–100 weighted composite across all above
   daysSafe: number;                     // KEY METRIC: days crew stays adequately fed at current rate
   trend: NutritionTrend;
 }
