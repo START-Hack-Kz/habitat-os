@@ -3,3 +3,10 @@ node_modules
 .amplify
 amplify_outputs*
 amplifyconfiguration*
+# Local env secrets
+.env
+.env.local
+.env.*.local
+
+# AWS credential/config files if copied into project by mistake
+.aws/
