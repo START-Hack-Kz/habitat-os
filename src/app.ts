@@ -66,6 +66,32 @@ interface GrowthStageData {
   state: "done" | "active" | "future";
 }
 
+interface OverviewResourceTileData {
+  label: string;
+  value: string;
+  unit: string;
+  status: string;
+  fillPct: number;
+  fillColor: string;
+  caution: boolean;
+}
+
+interface SensorReadingData {
+  label: string;
+  value: string;
+  state: string;
+  tone: StatusTone;
+}
+
+interface MicronutrientMiniData {
+  id: string;
+  label: string;
+  produced: string;
+  target: string;
+  coveragePercent: number;
+  tone: StatusTone;
+}
+
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "I. Overview" },
   { id: "crops", label: "II. Crops & Growth" },
@@ -145,7 +171,7 @@ export function renderApp(root: HTMLDivElement): void {
       if (zoneId) {
         state.selectedZoneId = zoneId;
 
-        if (zoneTrigger.closest(".overview-twin")) {
+        if (zoneTrigger.closest(".overview-zone-ops")) {
           state.activeTab = "crops";
         }
 
@@ -324,14 +350,37 @@ function renderOverview(
 
       <div class="overview-middle">
         ${renderPanel({
-          title: "Digital Twin",
+          title: "Zone Operations",
           dotColor: "var(--aero-blue)",
-          rightSlot: renderStatusBadge(mission.activeScenario ? "Scenario Live" : "Twin Live", missionTone(mission)),
+          rightSlot: renderStatusBadge(
+            mission.activeScenario ? "Scenario Live" : "Nominal Watch",
+            missionTone(mission),
+          ),
           children: `
-            <div class="overview-twin">
-              <div class="overview-twin__grid">
+            <div class="overview-zone-ops">
+              <div class="overview-zone-ops__summary">
+                <div class="overview-zone-ops__summary-copy">
+                  <p class="overview-zone-ops__eyebrow">Live greenhouse state</p>
+                  <p class="overview-zone-ops__text">
+                    ${mission.activeScenario
+                      ? `${escapeHtml(mission.activeScenario.title)} is active across ${mission.activeScenario.affectedZoneIds.join(", ")}.`
+                      : "All four crop bays are reading from the canonical mission snapshot."}
+                  </p>
+                </div>
+                <div class="overview-zone-ops__summary-stats">
+                  ${renderStatusBadge(
+                    `${mission.zones.filter((zone) => zone.stress.active).length} stressed`,
+                    mission.zones.some((zone) => zone.stress.active) ? "CAU" : "NOM",
+                  )}
+                  ${renderStatusBadge(
+                    `${mission.zones.filter((zone) => zone.status === "critical").length} critical`,
+                    mission.zones.some((zone) => zone.status === "critical") ? "ABT" : "NOM",
+                  )}
+                </div>
+              </div>
+              <div class="overview-zone-grid">
                 ${mission.zones
-                  .map((zone) => renderDigitalTwinCell(zone, zone.zoneId === selectedZoneId))
+                  .map((zone) => renderZoneOperationsCard(zone, zone.zoneId === selectedZoneId))
                   .join("")}
               </div>
             </div>
@@ -346,6 +395,23 @@ function renderOverview(
               <div class="overview-env-grid">
                 ${buildResourceTiles(mission).map((tile) => renderResourceTile(tile)).join("")}
               </div>
+              <div class="overview-resource-footer">
+                ${renderStatusBadge(
+                  `Water ${mission.resources.waterDaysRemaining.toFixed(1)} d`,
+                  toneFromPercent(mission.resources.waterRecyclingEfficiencyPercent, 85, 65),
+                )}
+                ${renderStatusBadge(
+                  `Energy ${mission.resources.energyDaysRemaining.toFixed(1)} d`,
+                  toneFromEnergyReserve(mission.resources.energyReserveHours),
+                )}
+                ${renderStatusBadge(
+                  `Solar ${mission.resources.solarGenerationKwhPerDay} kWh/d`,
+                  mission.resources.solarGenerationKwhPerDay >=
+                    mission.resources.energyDailyConsumptionKwh * 0.9
+                    ? "NOM"
+                    : "CAU",
+                )}
+              </div>
             `,
           })}
 
@@ -357,8 +423,19 @@ function renderOverview(
                 <div class="overview-nutrition-mini">
                   ${buildNutritionMiniRows(mission).map((row) => renderOverviewNutritionRow(row)).join("")}
                 </div>
+                <div class="overview-micro-grid">
+                  ${buildMicronutrientMiniRows(mission)
+                    .map((item) => renderMicronutrientCell(item))
+                    .join("")}
+                </div>
               </div>
             `,
+          })}
+
+          ${renderPanel({
+            title: "Incident / Planner",
+            dotColor: "var(--cau)",
+            children: renderIncidentPanel(mission, planner),
           })}
         </div>
       </div>
@@ -967,12 +1044,14 @@ function getSelectedZone(mission: BackendMissionState, selectedZoneId: string): 
 function buildOverviewMetrics(mission: BackendMissionState): MetricTileData[] {
   const missionProgress = Math.round((mission.missionDay / mission.missionDurationDays) * 100);
   const healthyZones = mission.zones.filter((zone) => zoneTone(zone) === "NOM").length;
+  const stressedZones = mission.zones.filter((zone) => zoneTone(zone) === "CAU").length;
+  const criticalZones = mission.zones.filter((zone) => zoneTone(zone) === "ABT").length;
 
   return [
     {
       label: "Mission Progress",
       value: `${mission.missionDay}/${mission.missionDurationDays}`,
-      sub: `${missionProgress}% through mission`,
+      sub: `${missionProgress}% mission elapsed`,
       progress: missionProgress,
       progressColor: "var(--aero-blue)",
       level: missionTone(mission),
@@ -980,7 +1059,7 @@ function buildOverviewMetrics(mission: BackendMissionState): MetricTileData[] {
     {
       label: "Healthy Zones",
       value: `${healthyZones}/${mission.zones.length}`,
-      sub: "Backend zone status",
+      sub: `${stressedZones} stressed · ${criticalZones} critical`,
       progress: Math.round((healthyZones / Math.max(mission.zones.length, 1)) * 100),
       progressColor: "var(--nom)",
       level: healthyZones === mission.zones.length ? "NOM" : healthyZones >= mission.zones.length / 2 ? "CAU" : "ABT",
@@ -988,7 +1067,7 @@ function buildOverviewMetrics(mission: BackendMissionState): MetricTileData[] {
     {
       label: "Caloric Coverage",
       value: `${mission.nutrition.caloricCoveragePercent}%`,
-      sub: `${mission.nutrition.dailyCaloriesProduced} / ${mission.nutrition.dailyCaloriesTarget} kcal`,
+      sub: `${mission.nutrition.dailyCaloriesProduced} of ${mission.nutrition.dailyCaloriesTarget} kcal/day`,
       progress: mission.nutrition.caloricCoveragePercent,
       progressColor: "var(--mars-orange)",
       level: toneFromPercent(mission.nutrition.caloricCoveragePercent, 95, 75),
@@ -996,7 +1075,7 @@ function buildOverviewMetrics(mission: BackendMissionState): MetricTileData[] {
     {
       label: "Water Recycling",
       value: `${mission.resources.waterRecyclingEfficiencyPercent}%`,
-      sub: `${mission.resources.waterReservoirL} L reservoir`,
+      sub: `${mission.resources.waterDaysRemaining.toFixed(1)} d net runway`,
       progress: mission.resources.waterRecyclingEfficiencyPercent,
       progressColor: "var(--aero-blue)",
       level: toneFromPercent(mission.resources.waterRecyclingEfficiencyPercent, 85, 65),
@@ -1321,13 +1400,13 @@ function buildZoneTelemetry(zone: BackendCropZone) {
   ];
 }
 
-function buildResourceTiles(mission: BackendMissionState) {
+function buildResourceTiles(mission: BackendMissionState): OverviewResourceTileData[] {
   return [
     {
       label: "Water Reservoir",
       value: `${mission.resources.waterReservoirL}`,
       unit: "L",
-      status: `${mission.resources.waterDailyConsumptionL} L/day`,
+      status: `${mission.resources.waterDailyConsumptionL} L/day gross`,
       fillPct: clampPercent(mission.resources.waterReservoirL / 4),
       fillColor: "var(--aero-blue)",
       caution: false,
@@ -1345,19 +1424,53 @@ function buildResourceTiles(mission: BackendMissionState) {
       label: "Nutrient Solution",
       value: `${mission.resources.nutrientSolutionLevelPercent}`,
       unit: "%",
-      status: formatNutrientMixStatus(mission.resources.nutrientMixStatus),
+      status: `N ${mission.resources.nutrientN} · P ${mission.resources.nutrientP} · K ${mission.resources.nutrientK}`,
       fillPct: mission.resources.nutrientSolutionLevelPercent,
       fillColor: "var(--cau)",
       caution: mission.resources.nutrientMixStatus !== "balanced",
     },
     {
       label: "Energy Reserve",
-      value: `${mission.resources.energyReserveHours}`,
-      unit: "h",
-      status: `${mission.resources.energyAvailableKwh} kWh`,
-      fillPct: clampPercent((mission.resources.energyAvailableKwh / Math.max(mission.resources.energyDailyConsumptionKwh, 1)) * 100),
+      value: `${mission.resources.energyAvailableKwh}`,
+      unit: "kWh",
+      status: `${mission.resources.energyDaysRemaining.toFixed(1)} d · ${mission.resources.energyReserveHours} h`,
+      fillPct: clampPercent(
+        (mission.resources.energyAvailableKwh /
+          Math.max(mission.resources.energyDailyConsumptionKwh, 1)) *
+          100,
+      ),
       fillColor: "var(--nom)",
       caution: mission.resources.energyReserveHours < 8,
+    },
+    {
+      label: "Solar Input",
+      value: `${mission.resources.solarGenerationKwhPerDay}`,
+      unit: "kWh/d",
+      status: "Daily generation",
+      fillPct: clampPercent((mission.resources.solarGenerationKwhPerDay / 220) * 100),
+      fillColor: "var(--nom)",
+      caution:
+        mission.resources.solarGenerationKwhPerDay <
+        mission.resources.energyDailyConsumptionKwh,
+    },
+    {
+      label: "Chemistry Flag",
+      value: formatNutrientMixStatus(mission.resources.nutrientMixStatus),
+      unit: "",
+      status: `${mission.resources.waterDaysRemaining.toFixed(1)} d water · ${mission.resources.energyDaysRemaining.toFixed(1)} d energy`,
+      fillPct:
+        mission.resources.nutrientMixStatus === "balanced"
+          ? 100
+          : mission.resources.nutrientMixStatus === "watch"
+            ? 62
+            : 24,
+      fillColor:
+        mission.resources.nutrientMixStatus === "balanced"
+          ? "var(--nom)"
+          : mission.resources.nutrientMixStatus === "watch"
+            ? "var(--cau)"
+            : "var(--abt)",
+      caution: mission.resources.nutrientMixStatus !== "balanced",
     },
   ];
 }
@@ -1377,16 +1490,76 @@ function buildNutritionMiniRows(mission: BackendMissionState): NutritionMiniRow[
       badge: `${mission.nutrition.proteinCoveragePercent}%`,
     },
     {
-      label: "Micronutrients",
-      value: `${mission.nutrition.micronutrientAdequacyPercent}%`,
-      tone: toneFromPercent(mission.nutrition.micronutrientAdequacyPercent, 90, 70),
-      badge: mission.nutrition.trend,
+      label: "Coverage Score",
+      value: `${mission.nutrition.nutritionalCoverageScore}`,
+      tone: toneFromPercent(mission.nutrition.nutritionalCoverageScore, 90, 70),
+      badge: `${mission.nutrition.micronutrientAdequacyPercent}% micro`,
     },
     {
       label: "Days Safe",
       value: `${mission.nutrition.daysSafe}`,
-      tone: mission.nutrition.daysSafe >= 7 ? "NOM" : mission.nutrition.daysSafe >= 4 ? "CAU" : "ABT",
-      badge: "reserve",
+      tone:
+        mission.nutrition.daysSafe >= 180
+          ? "NOM"
+          : mission.nutrition.daysSafe >= 60
+            ? "CAU"
+            : "ABT",
+      badge: mission.nutrition.trend,
+    },
+  ];
+}
+
+function buildMicronutrientMiniRows(
+  mission: BackendMissionState,
+): MicronutrientMiniData[] {
+  return [
+    {
+      id: "vita",
+      label: "Vit A",
+      produced: `${mission.nutrition.vitaminA.produced}${mission.nutrition.vitaminA.unit}`,
+      target: `${mission.nutrition.vitaminA.target}${mission.nutrition.vitaminA.unit}`,
+      coveragePercent: mission.nutrition.vitaminA.coveragePercent,
+      tone: toneFromPercent(mission.nutrition.vitaminA.coveragePercent, 95, 75),
+    },
+    {
+      id: "vitc",
+      label: "Vit C",
+      produced: `${mission.nutrition.vitaminC.produced}${mission.nutrition.vitaminC.unit}`,
+      target: `${mission.nutrition.vitaminC.target}${mission.nutrition.vitaminC.unit}`,
+      coveragePercent: mission.nutrition.vitaminC.coveragePercent,
+      tone: toneFromPercent(mission.nutrition.vitaminC.coveragePercent, 95, 75),
+    },
+    {
+      id: "fol",
+      label: "Folate",
+      produced: `${mission.nutrition.folate.produced}${mission.nutrition.folate.unit}`,
+      target: `${mission.nutrition.folate.target}${mission.nutrition.folate.unit}`,
+      coveragePercent: mission.nutrition.folate.coveragePercent,
+      tone: toneFromPercent(mission.nutrition.folate.coveragePercent, 95, 75),
+    },
+    {
+      id: "iron",
+      label: "Iron",
+      produced: `${mission.nutrition.iron.produced}${mission.nutrition.iron.unit}`,
+      target: `${mission.nutrition.iron.target}${mission.nutrition.iron.unit}`,
+      coveragePercent: mission.nutrition.iron.coveragePercent,
+      tone: toneFromPercent(mission.nutrition.iron.coveragePercent, 95, 75),
+    },
+    {
+      id: "pot",
+      label: "Potassium",
+      produced: `${mission.nutrition.potassium.produced}${mission.nutrition.potassium.unit}`,
+      target: `${mission.nutrition.potassium.target}${mission.nutrition.potassium.unit}`,
+      coveragePercent: mission.nutrition.potassium.coveragePercent,
+      tone: toneFromPercent(mission.nutrition.potassium.coveragePercent, 95, 75),
+    },
+    {
+      id: "mag",
+      label: "Magnesium",
+      produced: `${mission.nutrition.magnesium.produced}${mission.nutrition.magnesium.unit}`,
+      target: `${mission.nutrition.magnesium.target}${mission.nutrition.magnesium.unit}`,
+      coveragePercent: mission.nutrition.magnesium.coveragePercent,
+      tone: toneFromPercent(mission.nutrition.magnesium.coveragePercent, 95, 75),
     },
   ];
 }
@@ -1550,6 +1723,126 @@ function buildRiskGauges(mission: BackendMissionState) {
   ];
 }
 
+type SensorThreshold = {
+  low: number;
+  high: number;
+  criticalLow: number;
+  criticalHigh: number;
+};
+
+const SENSOR_THRESHOLDS: Record<
+  BackendCropZone["cropType"],
+  {
+    temperature: SensorThreshold;
+    humidity: SensorThreshold;
+    lightPAR: SensorThreshold;
+    soilMoisture: SensorThreshold;
+    nutrientPH: SensorThreshold;
+    electricalConductivity: SensorThreshold;
+    co2Ppm: SensorThreshold;
+  }
+> = {
+  lettuce: {
+    temperature: { low: 18, high: 24, criticalLow: 14, criticalHigh: 30 },
+    humidity: { low: 50, high: 70, criticalLow: 35, criticalHigh: 85 },
+    lightPAR: { low: 180, high: 280, criticalLow: 140, criticalHigh: 360 },
+    soilMoisture: { low: 65, high: 80, criticalLow: 40, criticalHigh: 92 },
+    nutrientPH: { low: 5.8, high: 6.4, criticalLow: 5.2, criticalHigh: 7 },
+    electricalConductivity: { low: 1.4, high: 2.2, criticalLow: 0.8, criticalHigh: 3 },
+    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
+  },
+  potato: {
+    temperature: { low: 17, high: 22, criticalLow: 12, criticalHigh: 29 },
+    humidity: { low: 55, high: 75, criticalLow: 35, criticalHigh: 88 },
+    lightPAR: { low: 250, high: 380, criticalLow: 180, criticalHigh: 460 },
+    soilMoisture: { low: 60, high: 82, criticalLow: 35, criticalHigh: 95 },
+    nutrientPH: { low: 5.5, high: 6.2, criticalLow: 5, criticalHigh: 6.8 },
+    electricalConductivity: { low: 1.6, high: 2.4, criticalLow: 1, criticalHigh: 3.3 },
+    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
+  },
+  beans: {
+    temperature: { low: 20, high: 26, criticalLow: 14, criticalHigh: 33 },
+    humidity: { low: 50, high: 72, criticalLow: 35, criticalHigh: 88 },
+    lightPAR: { low: 210, high: 320, criticalLow: 160, criticalHigh: 420 },
+    soilMoisture: { low: 58, high: 78, criticalLow: 35, criticalHigh: 90 },
+    nutrientPH: { low: 5.9, high: 6.5, criticalLow: 5.3, criticalHigh: 7.1 },
+    electricalConductivity: { low: 1.5, high: 2.3, criticalLow: 1, criticalHigh: 3.2 },
+    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
+  },
+  radish: {
+    temperature: { low: 18, high: 24, criticalLow: 14, criticalHigh: 31 },
+    humidity: { low: 48, high: 72, criticalLow: 35, criticalHigh: 88 },
+    lightPAR: { low: 150, high: 240, criticalLow: 110, criticalHigh: 320 },
+    soilMoisture: { low: 55, high: 76, criticalLow: 30, criticalHigh: 90 },
+    nutrientPH: { low: 5.7, high: 6.3, criticalLow: 5.1, criticalHigh: 6.9 },
+    electricalConductivity: { low: 1.3, high: 2.1, criticalLow: 0.8, criticalHigh: 2.9 },
+    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
+  },
+};
+
+function evaluateSensorThreshold(
+  value: number,
+  threshold: SensorThreshold,
+): { tone: StatusTone; state: string } {
+  if (value <= threshold.criticalLow) {
+    return { tone: "ABT", state: "critical low" };
+  }
+
+  if (value >= threshold.criticalHigh) {
+    return { tone: "ABT", state: "critical high" };
+  }
+
+  if (value < threshold.low) {
+    return { tone: "CAU", state: "low" };
+  }
+
+  if (value > threshold.high) {
+    return { tone: "CAU", state: "high" };
+  }
+
+  return { tone: "NOM", state: "nominal" };
+}
+
+function buildSensorReadings(zone: BackendCropZone): SensorReadingData[] {
+  const thresholds = SENSOR_THRESHOLDS[zone.cropType];
+
+  return [
+    {
+      label: "Temp",
+      value: `${zone.sensors.temperature} C`,
+      ...evaluateSensorThreshold(zone.sensors.temperature, thresholds.temperature),
+    },
+    {
+      label: "Humidity",
+      value: `${zone.sensors.humidity}%`,
+      ...evaluateSensorThreshold(zone.sensors.humidity, thresholds.humidity),
+    },
+    {
+      label: "PAR",
+      value: `${zone.sensors.lightPAR}`,
+      ...evaluateSensorThreshold(zone.sensors.lightPAR, thresholds.lightPAR),
+    },
+    {
+      label: "Moisture",
+      value: `${zone.sensors.soilMoisture}%`,
+      ...evaluateSensorThreshold(zone.sensors.soilMoisture, thresholds.soilMoisture),
+    },
+    {
+      label: "pH",
+      value: `${zone.sensors.nutrientPH}`,
+      ...evaluateSensorThreshold(zone.sensors.nutrientPH, thresholds.nutrientPH),
+    },
+    {
+      label: "EC",
+      value: `${zone.sensors.electricalConductivity} mS`,
+      ...evaluateSensorThreshold(
+        zone.sensors.electricalConductivity,
+        thresholds.electricalConductivity,
+      ),
+    },
+  ];
+}
+
 function renderMetricTile(item: MetricTileData): string {
   return renderKpiTile({
     label: item.label,
@@ -1561,16 +1854,89 @@ function renderMetricTile(item: MetricTileData): string {
   });
 }
 
-function renderDigitalTwinCell(zone: BackendCropZone, isSelected: boolean): string {
+function renderZoneOperationsCard(zone: BackendCropZone, isSelected: boolean): string {
+  const sensorReadings = buildSensorReadings(zone);
+  const symptoms = zone.stress.symptoms.slice(0, 3);
+
   return `
     <button
       type="button"
-      class="gh-cell ${zoneStatusClass(zone)} ${isSelected ? "is-selected" : ""}"
+      class="zone-ops-card ${zoneStatusClass(zone)} ${isSelected ? "is-selected" : ""}"
       data-zone-select="${escapeHtml(zone.zoneId)}"
     >
-      <span class="gh-cell__slot mono">${escapeHtml(zone.zoneId)}</span>
-      <span class="gh-cell__title">${escapeHtml(zone.name)}</span>
-      <span class="gh-cell__meta mono">${escapeHtml(formatCropType(zone.cropType))} | day ${zone.growthDay}/${zone.growthCycleDays} | ${zone.growthProgressPercent}%</span>
+      <div class="zone-ops-card__head">
+        <div>
+          <p class="zone-ops-card__zone mono">${escapeHtml(zone.zoneId)}</p>
+          <p class="zone-ops-card__name">${escapeHtml(zone.name)}</p>
+          <p class="zone-ops-card__meta">${escapeHtml(formatCropType(zone.cropType))}</p>
+        </div>
+        <div class="zone-ops-card__badges">
+          ${renderStatusBadge(formatZoneStatus(zone.status), zoneTone(zone))}
+          ${
+            zone.stress.active
+              ? renderStatusBadge(
+                  `${formatStressType(zone.stress.type)} ${zone.stress.severity}`,
+                  zoneTone(zone),
+                )
+              : renderStatusBadge("stable", "NOM")
+          }
+        </div>
+      </div>
+
+      <div class="zone-ops-card__metrics">
+        <div class="zone-ops-card__metric">
+          <span class="zone-ops-card__metric-label">Cycle</span>
+          <span class="zone-ops-card__metric-value mono">${zone.growthDay}/${zone.growthCycleDays} d</span>
+        </div>
+        <div class="zone-ops-card__metric">
+          <span class="zone-ops-card__metric-label">Progress</span>
+          <span class="zone-ops-card__metric-value mono">${zone.growthProgressPercent}%</span>
+        </div>
+        <div class="zone-ops-card__metric">
+          <span class="zone-ops-card__metric-label">Projected Yield</span>
+          <span class="zone-ops-card__metric-value mono">${zone.projectedYieldKg.toFixed(1)} kg</span>
+        </div>
+        <div class="zone-ops-card__metric">
+          <span class="zone-ops-card__metric-label">Allocation</span>
+          <span class="zone-ops-card__metric-value mono">${zone.allocationPercent}%</span>
+        </div>
+      </div>
+
+      <div class="ui-kpi__bar zone-ops-card__progress">
+        <span style="width:${zone.growthProgressPercent}%; background:${toneColor(zoneTone(zone))}"></span>
+      </div>
+
+      <div class="zone-ops-card__stress">
+        <p class="zone-ops-card__stress-text">${escapeHtml(zone.stress.summary)}</p>
+        ${
+          zone.stress.boltingRisk
+            ? `<p class="zone-ops-card__risk">Bolting risk active</p>`
+            : ""
+        }
+        ${
+          symptoms.length > 0
+            ? `<div class="zone-ops-card__symptoms">${symptoms
+                .map((symptom) => renderStatusBadge(symptom.replaceAll("_", " "), zoneTone(zone)))
+                .join("")}</div>`
+            : ""
+        }
+      </div>
+
+      <div class="zone-ops-card__sensor-grid">
+        ${sensorReadings
+          .map(
+            (reading) => `
+              <div class="zone-sensor">
+                <div class="zone-sensor__head">
+                  <span class="zone-sensor__label">${reading.label}</span>
+                  ${renderStatusBadge(reading.state, reading.tone)}
+                </div>
+                <div class="zone-sensor__value mono">${reading.value}</div>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
     </button>
   `;
 }
@@ -1617,24 +1983,31 @@ function renderGrowthStageNode(stage: GrowthStageData): string {
 
 function renderMissionLogEntry(entry: BackendEventLogEntry): string {
   return renderLogEntry({
-    type: logTypeFromEvent(entry.level),
-    icon: eventIcon(entry.level),
+    type: logTypeFromEvent(entry),
+    icon: eventIcon(entry),
     message: entry.message,
     meta: `${formatEventStamp(entry)}${entry.zoneId ? ` | ${entry.zoneId}` : ""}`,
-    confidence: `${entry.level}`.toUpperCase(),
-    extra: entry.zoneId ? renderStatusBadge(entry.zoneId, eventTone(entry.level)) : "",
+    confidence: entry.type.replaceAll("_", " ").toUpperCase(),
+    extra:
+      entry.type === "ai_action"
+        ? renderStatusBadge("AI action", "CAU")
+        : entry.zoneId
+          ? renderStatusBadge(entry.zoneId, eventTone(entry.level))
+          : "",
   });
 }
 
 function renderTimelineCard(entry: BackendEventLogEntry, currentMissionDay: number): string {
   const isCurrent = entry.missionDay === currentMissionDay;
+  const missionDelta = currentMissionDay - entry.missionDay;
 
   return `
     <div class="overview-timeline-chip ${isCurrent ? "is-current" : ""}">
       <span class="overview-timeline-chip__sol mono">SOL ${entry.missionDay}</span>
       <span class="overview-timeline-chip__dot" style="background:${toneColor(eventTone(entry.level))}"></span>
-      <span class="overview-timeline-chip__label">${entry.zoneId ? escapeHtml(entry.zoneId) : "Mission"}</span>
+      <span class="overview-timeline-chip__label">${entry.zoneId ? escapeHtml(entry.zoneId) : entry.type.replaceAll("_", " ")}</span>
       <span class="overview-timeline-chip__event">${escapeHtml(entry.message)}</span>
+      <span class="overview-timeline-chip__meta mono">${isCurrent ? "current sol" : `${missionDelta} sol ago`}</span>
     </div>
   `;
 }
@@ -1649,15 +2022,22 @@ function renderOverviewNutritionRow(row: NutritionMiniRow): string {
   `;
 }
 
-function renderResourceTile(tile: {
-  label: string;
-  value: string;
-  unit: string;
-  status: string;
-  fillPct: number;
-  fillColor: string;
-  caution: boolean;
-}): string {
+function renderMicronutrientCell(item: MicronutrientMiniData): string {
+  return `
+    <div class="overview-micro-cell">
+      <div class="overview-micro-cell__head">
+        <span class="overview-micro-cell__label">${item.label}</span>
+        ${renderStatusBadge(`${item.coveragePercent}%`, item.tone)}
+      </div>
+      <div class="overview-micro-cell__body">
+        <span class="mono">${item.produced}</span>
+        <span class="overview-micro-cell__target mono">target ${item.target}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderResourceTile(tile: OverviewResourceTileData): string {
   return `
     <div class="overview-env-tile">
       <div class="overview-env-tile__head">
@@ -1668,6 +2048,59 @@ function renderResourceTile(tile: {
       <div class="ui-kpi__bar">
         <span style="width:${tile.fillPct}%; background:${tile.fillColor}"></span>
       </div>
+    </div>
+  `;
+}
+
+function renderIncidentPanel(
+  mission: BackendMissionState,
+  planner: BackendPlannerOutput | null,
+): string {
+  const primaryAction = planner?.recommendedActions[0];
+  const incidentLabel = mission.activeScenario
+    ? `${mission.activeScenario.title} · ${formatScenarioSeverity(mission.activeScenario.severity)}`
+    : "No active scenario";
+  const incidentTone = mission.activeScenario
+    ? severityTone(mission.activeScenario.severity)
+    : missionTone(mission);
+
+  return `
+    <div class="incident-panel">
+      <div class="incident-panel__row">
+        <span class="incident-panel__label">Incident</span>
+        <span class="incident-panel__value">${renderStatusBadge(incidentLabel, incidentTone)}</span>
+      </div>
+      <div class="incident-panel__row">
+        <span class="incident-panel__label">Planner</span>
+        <span class="incident-panel__value">${renderStatusBadge(
+          planner ? formatPlannerMode(planner.mode) : "offline",
+          planner?.mode === "nutrition_preservation" ? "CAU" : "NOM",
+        )}</span>
+      </div>
+      <div class="incident-panel__row">
+        <span class="incident-panel__label">Actions queued</span>
+        <span class="incident-panel__value mono">${planner?.recommendedActions.length ?? 0}</span>
+      </div>
+      <div class="incident-panel__row">
+        <span class="incident-panel__label">Priority response</span>
+        <span class="incident-panel__value incident-panel__value--wrap">
+          ${primaryAction ? escapeHtml(primaryAction.description) : "No planner action required."}
+        </span>
+      </div>
+      ${
+        mission.activeScenario
+          ? renderNotice({
+              level: noticeFromTone(incidentTone),
+              title: "Scenario state",
+              children: `${mission.activeScenario.description} Affected zones: ${mission.activeScenario.affectedZoneIds.join(", ")}.`,
+            })
+          : renderNotice({
+              level: "ok",
+              title: "Operational state",
+              children:
+                "No injected failure scenario is active. Planner remains in monitoring mode and the dashboard is rendering the live mission snapshot.",
+            })
+      }
     </div>
   `;
 }
@@ -1835,24 +2268,36 @@ function zoneStatusClass(zone: BackendCropZone): string {
   return `status-${tone}${offline}`;
 }
 
-function logTypeFromEvent(level: BackendEventLogEntry["level"]): "act" | "wrn" | "alr" | "inf" {
-  if (level === "critical") {
+function logTypeFromEvent(entry: BackendEventLogEntry): "act" | "wrn" | "alr" | "inf" {
+  if (entry.type === "ai_action") {
+    return "act";
+  }
+
+  if (entry.level === "critical") {
     return "alr";
   }
 
-  if (level === "warning") {
+  if (entry.level === "warning" || entry.type === "scenario_injected") {
     return "wrn";
   }
 
   return "inf";
 }
 
-function eventIcon(level: BackendEventLogEntry["level"]): string {
-  if (level === "critical") {
+function eventIcon(entry: BackendEventLogEntry): string {
+  if (entry.type === "ai_action") {
+    return "AI";
+  }
+
+  if (entry.type === "scenario_injected") {
+    return "SIM";
+  }
+
+  if (entry.level === "critical") {
     return "ACT";
   }
 
-  if (level === "warning") {
+  if (entry.level === "warning") {
     return "WRN";
   }
 
@@ -1907,8 +2352,8 @@ function formatScenarioSeverity(severity: BackendScenarioSeverity): string {
   return severity.slice(0, 1).toUpperCase() + severity.slice(1);
 }
 
-function formatPlannerMode(mode: NonNullable<BackendPlannerOutput>["mode"]): string {
-  return mode.replaceAll("_", " ");
+function formatPlannerMode(mode: BackendPlannerOutput["mode"] | undefined): string {
+  return (mode ?? "normal").replaceAll("_", " ");
 }
 
 function formatPlannerActionType(type: NonNullable<BackendPlannerOutput>["recommendedActions"][number]["type"]): string {

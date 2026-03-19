@@ -852,6 +852,15 @@ code,
 .agent-side-stack,
 .crop-detail-primary {
   height: 100%;
+}
+
+.overview-stack {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.resource-stack,
+.agent-side-stack,
+.crop-detail-primary {
   grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 
@@ -1696,14 +1705,14 @@ code,
 
 .overview-middle {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(0, 1.7fr) minmax(360px, 1fr);
   gap: 12px;
   align-items: stretch;
 }
 
 .overview-bottom {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
   gap: 12px;
   align-items: stretch;
 }
@@ -1730,15 +1739,53 @@ code,
   color: var(--text-0);
 }
 
-.overview-twin {
+.overview-zone-ops {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
-.overview-twin__grid {
+.overview-zone-ops__summary {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--chrome);
+  background: var(--bg-1);
+  padding: 12px;
+}
+
+.overview-zone-ops__summary-copy {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 4px;
+}
+
+.overview-zone-ops__eyebrow {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--font-data);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.overview-zone-ops__text {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.overview-zone-ops__summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.overview-zone-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .backend-scenario-grid {
@@ -1803,14 +1850,6 @@ code,
   gap: 10px;
 }
 
-.overview-twin__legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  color: var(--text-2);
-  font-size: 9px;
-}
-
 .overview-env-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1855,14 +1894,21 @@ code,
   color: var(--cau);
 }
 
+.overview-resource-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .overview-nutrition-mini {
   display: grid;
   gap: 8px;
 }
 
 .overview-nutrition-panel {
+  display: grid;
+  gap: 12px;
   min-height: 168px;
-  padding-bottom: 10px;
 }
 
 .overview-nutrition-row {
@@ -1876,20 +1922,59 @@ code,
   padding-bottom: 0;
 }
 
-.overview-timeline-strip {
-  display: flex;
+.overview-micro-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
+}
+
+.overview-micro-cell {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--chrome);
+  background: var(--bg-1);
+  padding: 10px;
+}
+
+.overview-micro-cell__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.overview-micro-cell__label,
+.zone-sensor__label,
+.zone-ops-card__metric-label,
+.incident-panel__label,
+.overview-timeline-chip__meta {
+  color: var(--text-2);
+  font-family: var(--font-data);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.overview-micro-cell__body {
+  display: grid;
+  gap: 2px;
+  color: var(--text-0);
+  font-size: 10px;
+}
+
+.overview-micro-cell__target {
+  color: var(--text-2);
+}
+
+.overview-timeline-strip {
+  display: grid;
+  gap: 10px;
 }
 
 .overview-timeline-chip {
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: auto auto 1fr;
   gap: 4px 8px;
-  min-width: 154px;
   border: 1px solid var(--chrome);
   background: var(--bg-1);
   border-radius: 4px;
@@ -1902,9 +1987,9 @@ code,
 }
 
 .overview-timeline-chip__sol {
-  grid-column: 1 / -1;
+  grid-column: 1 / 2;
   color: var(--text-0);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .overview-timeline-chip__dot {
@@ -1916,6 +2001,153 @@ code,
 .overview-timeline-chip__event {
   grid-column: 1 / -1;
   font-size: 10px;
+}
+
+.overview-timeline-chip__meta {
+  grid-column: 3 / 4;
+  justify-self: end;
+}
+
+.zone-ops-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--chrome);
+  background: var(--bg-1);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.zone-ops-card:hover,
+.zone-ops-card.is-selected {
+  border-color: var(--chrome-hi);
+  background: var(--bg-2);
+}
+
+.zone-ops-card.is-selected {
+  box-shadow: inset 0 0 0 1px rgba(74, 127, 193, 0.2);
+}
+
+.zone-ops-card__head,
+.zone-sensor__head,
+.incident-panel__row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.zone-ops-card__zone,
+.zone-ops-card__name,
+.zone-ops-card__meta,
+.zone-ops-card__stress-text,
+.zone-ops-card__risk {
+  margin: 0;
+}
+
+.zone-ops-card__zone {
+  color: var(--aero-blue);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.zone-ops-card__name {
+  color: var(--text-0);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.zone-ops-card__meta {
+  color: var(--text-2);
+  font-size: 9px;
+}
+
+.zone-ops-card__badges,
+.zone-ops-card__symptoms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.zone-ops-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.zone-ops-card__metric {
+  display: grid;
+  gap: 4px;
+}
+
+.zone-ops-card__metric-value {
+  color: var(--text-0);
+  font-size: 12px;
+}
+
+.zone-ops-card__progress {
+  margin-top: -2px;
+}
+
+.zone-ops-card__stress {
+  display: grid;
+  gap: 8px;
+}
+
+.zone-ops-card__stress-text {
+  color: var(--text-1);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.zone-ops-card__risk {
+  color: var(--cau);
+  font-family: var(--font-data);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.zone-ops-card__sensor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.zone-sensor {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(42, 49, 80, 0.8);
+  background: var(--bg-2);
+  padding: 8px;
+}
+
+.zone-sensor__value {
+  color: var(--text-0);
+  font-size: 11px;
+}
+
+.incident-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.incident-panel__value {
+  color: var(--text-0);
+  font-size: 10px;
+  text-align: right;
+}
+
+.incident-panel__value--wrap {
+  max-width: 260px;
+  color: var(--text-1);
+  line-height: 1.5;
 }
 
 .page-intro {

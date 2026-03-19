@@ -363,6 +363,7 @@ export type BackendZoneStatus =
   | "stressed"
   | "critical"
   | "harvesting"
+  | "replanting"
   | "offline";
 export type BackendStressType =
   | "none"
@@ -382,6 +383,14 @@ export type BackendScenarioType =
   | "temperature_control_failure";
 export type BackendScenarioSeverity = "mild" | "moderate" | "critical";
 export type BackendEventLevel = "info" | "warning" | "critical";
+export type BackendEventType =
+  | "info"
+  | "warning"
+  | "critical"
+  | "ai_action"
+  | "scenario_injected"
+  | "harvest"
+  | "replant";
 export type BackendNutrientMixStatus = "balanced" | "watch" | "critical";
 export type BackendNutritionTrend = "improving" | "stable" | "declining";
 export type BackendPlannerMode = "normal" | "nutrition_preservation";
@@ -389,13 +398,32 @@ export type BackendPlannerActionType =
   | "reallocate_water"
   | "reduce_lighting"
   | "adjust_temperature"
-  | "flag_zone_offline";
+  | "flag_zone_offline"
+  | "adjust_temperature_setpoint"
+  | "pause_zone"
+  | "reduce_zone_allocation"
+  | "prioritize_zone"
+  | "trigger_harvest_early"
+  | "adjust_nutrient_mix";
 
 export interface BackendZoneStress {
   active: boolean;
   type: BackendStressType;
   severity: BackendStressSeverity;
   summary: string;
+  boltingRisk: boolean;
+  symptoms: string[];
+}
+
+export interface BackendZoneSensors {
+  temperature: number;
+  humidity: number;
+  co2Ppm: number;
+  lightPAR: number;
+  photoperiodHours: number;
+  nutrientPH: number;
+  electricalConductivity: number;
+  soilMoisture: number;
 }
 
 export interface BackendCropZone {
@@ -409,6 +437,7 @@ export interface BackendCropZone {
   projectedYieldKg: number;
   allocationPercent: number;
   status: BackendZoneStatus;
+  sensors: BackendZoneSensors;
   stress: BackendZoneStress;
 }
 
@@ -416,11 +445,24 @@ export interface BackendResourceState {
   waterReservoirL: number;
   waterRecyclingEfficiencyPercent: number;
   waterDailyConsumptionL: number;
+  waterDaysRemaining: number;
   nutrientSolutionLevelPercent: number;
   nutrientMixStatus: BackendNutrientMixStatus;
   energyAvailableKwh: number;
   energyDailyConsumptionKwh: number;
+  solarGenerationKwhPerDay: number;
+  energyDaysRemaining: number;
   energyReserveHours: number;
+  nutrientN: number;
+  nutrientP: number;
+  nutrientK: number;
+}
+
+export interface BackendMicronutrientStatus {
+  produced: number;
+  target: number;
+  unit: string;
+  coveragePercent: number;
 }
 
 export interface BackendNutritionStatus {
@@ -431,6 +473,13 @@ export interface BackendNutritionStatus {
   dailyProteinTargetG: number;
   proteinCoveragePercent: number;
   micronutrientAdequacyPercent: number;
+  vitaminA: BackendMicronutrientStatus;
+  vitaminC: BackendMicronutrientStatus;
+  vitaminK: BackendMicronutrientStatus;
+  folate: BackendMicronutrientStatus;
+  iron: BackendMicronutrientStatus;
+  potassium: BackendMicronutrientStatus;
+  magnesium: BackendMicronutrientStatus;
   nutritionalCoverageScore: number;
   daysSafe: number;
   trend: BackendNutritionTrend;
@@ -452,6 +501,7 @@ export interface BackendEventLogEntry {
   timestamp: string;
   missionDay: number;
   level: BackendEventLevel;
+  type: BackendEventType;
   message: string;
   zoneId?: string;
 }
