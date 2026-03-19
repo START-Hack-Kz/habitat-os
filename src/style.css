@@ -1481,8 +1481,8 @@ code,
 
 .agent-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.72fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   width: 100%;
   align-items: stretch;
 }
@@ -3334,7 +3334,8 @@ code,
   filter: drop-shadow(0 0 6px rgba(214, 62, 62, 0.42));
 }
 
-.habitat-window__dog-face {
+.habitat-window__dog-body,
+.habitat-window__dog-head {
   fill: rgba(228, 84, 84, 0.98);
   stroke: rgba(250, 210, 210, 0.52);
   stroke-width: 0.08;
@@ -3344,8 +3345,11 @@ code,
   fill: rgba(214, 62, 62, 0.96);
 }
 
-.habitat-window__dog-eye,
-.habitat-window__dog-nose {
+.habitat-window__dog-leg {
+  fill: rgba(214, 62, 62, 0.96);
+}
+
+.habitat-window__dog-eye {
   fill: rgba(31, 14, 14, 0.96);
 }
 

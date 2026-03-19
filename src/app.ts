@@ -158,7 +158,7 @@ const tabs: Array<{ id: TabId; label: string }> = [
   { id: "crops", label: "II. Crops & Growth" },
   { id: "resources", label: "III. Resources" },
   { id: "nutrition", label: "IV. Nutrition" },
-  { id: "risk", label: "V. Risk & Scenarios" },
+  { id: "risk", label: "V. Logs" },
   { id: "agent", label: "VI. Companion" },
 ];
 
@@ -852,7 +852,7 @@ function renderPage(state: AppState): string {
     case "nutrition":
       return renderNutrition(displayMission, state.planner);
     case "risk":
-      return renderRisk(state.mission);
+      return renderRisk(state.mission, state.companionLog);
     case "agent":
       return renderAgent(
         state.mission,
@@ -1078,14 +1078,18 @@ function renderHabitatOperationsWindow(
               <line class="habitat-window__dog-tail-glow" x1="-2.1" y1="0" x2="-0.78" y2="0"></line>
               <line class="habitat-window__dog-tail" x1="-1.55" y1="0" x2="-0.7" y2="0"></line>
               <g class="habitat-window__dog-icon">
-                <circle class="habitat-window__dog-face" cx="0" cy="0" r="0.72"></circle>
-                <polygon class="habitat-window__dog-ear" points="-0.34,-0.38 -0.78,-0.98 -0.12,-0.6"></polygon>
-                <polygon class="habitat-window__dog-ear" points="0.34,-0.38 0.78,-0.98 0.12,-0.6"></polygon>
-                <circle class="habitat-window__dog-eye" cx="-0.22" cy="-0.06" r="0.08"></circle>
-                <circle class="habitat-window__dog-eye" cx="0.22" cy="-0.06" r="0.08"></circle>
-                <circle class="habitat-window__dog-nose" cx="0" cy="0.15" r="0.1"></circle>
+                <ellipse class="habitat-window__dog-body" cx="-0.15" cy="0" rx="0.98" ry="0.58"></ellipse>
+                <circle class="habitat-window__dog-head" cx="0.96" cy="0" r="0.34"></circle>
+                <polygon class="habitat-window__dog-ear" points="1.06,-0.18 1.34,-0.54 1.16,-0.06"></polygon>
+                <polygon class="habitat-window__dog-ear" points="1.06,0.18 1.34,0.54 1.16,0.06"></polygon>
+                <rect class="habitat-window__dog-leg" x="-0.74" y="-0.76" width="0.18" height="0.38" rx="0.08"></rect>
+                <rect class="habitat-window__dog-leg" x="-0.1" y="-0.78" width="0.18" height="0.4" rx="0.08"></rect>
+                <rect class="habitat-window__dog-leg" x="-0.74" y="0.38" width="0.18" height="0.38" rx="0.08"></rect>
+                <rect class="habitat-window__dog-leg" x="-0.1" y="0.4" width="0.18" height="0.4" rx="0.08"></rect>
+                <circle class="habitat-window__dog-eye" cx="1.05" cy="-0.08" r="0.05"></circle>
+                <circle class="habitat-window__dog-eye" cx="1.05" cy="0.08" r="0.05"></circle>
               </g>
-              <animateMotion dur="18s" repeatCount="indefinite" rotate="auto">
+              <animateMotion dur="28s" repeatCount="indefinite" rotate="auto">
                 <mpath href="#${dogPathId}" />
               </animateMotion>
             </g>
@@ -1521,7 +1525,10 @@ function renderNutrition(mission: BackendMissionState, planner: BackendPlannerOu
   `;
 }
 
-function renderRisk(mission: BackendMissionState): string {
+function renderRisk(
+  mission: BackendMissionState,
+  companionLog: CompanionLogItem[],
+): string {
   return `
     ${renderRiskAlert(mission)}
 
@@ -1532,14 +1539,14 @@ function renderRisk(mission: BackendMissionState): string {
 
       <div class="risk-main-row">
         ${renderPanel({
-          title: "Emergency Log",
+          title: "Logs",
           dotColor: "var(--abt)",
           rightSlot: mission.activeScenario
             ? '<button class="btn btn-danger" type="button" data-scenario-reset="true">Reset scenario</button>'
             : renderStatusBadge("No active scenario", "NOM"),
           children: `
             <div class="risk-emergency-list">
-              ${mission.eventLog.slice(0, 8).map((entry) => renderMissionLogEntry(entry)).join("")}
+              ${renderEmergencyLogFeed(mission, companionLog)}
             </div>
           `,
         })}
@@ -1574,7 +1581,7 @@ function renderAgent(
   planner: BackendPlannerOutput | null,
   agent: BackendAgentAnalysis | null,
   messages: CompanionMessage[],
-  log: CompanionLogItem[],
+  _log: CompanionLogItem[],
   companionBusy: boolean,
   agentAnalyzing: boolean,
   agentAnalysisLabel: string,
@@ -1688,44 +1695,6 @@ function renderAgent(
               </form>
             </div>
           </div>
-
-          <aside class="agent-log-shell">
-            <div class="agent-log-shell__header">
-              <p class="agent-log-shell__label mono">Companion Log</p>
-              <p class="agent-log-shell__meta">Key commands and extracted mission notes from the chat</p>
-            </div>
-            <div class="agent-log-shell__body">
-              <div class="agent-uplink__command-list">
-                ${
-                  log.length > 0
-                    ? log
-                        .map(
-                          (item, index) => `
-                            <article class="agent-uplink__command">
-                              <div class="agent-uplink__command-head">
-                                <span class="agent-uplink__command-index mono">LOG ${String(index).padStart(2, "0")}</span>
-                                ${renderStatusBadge(item.kind, item.tone)}
-                              </div>
-                              <p class="agent-uplink__command-line mono">${escapeHtml(item.line)}</p>
-                              <p class="agent-uplink__command-body">${escapeHtml(item.body)}</p>
-                            </article>
-                          `,
-                        )
-                        .join("")
-                    : `
-                        <article class="agent-uplink__command agent-uplink__command--idle">
-                          <div class="agent-uplink__command-head">
-                            <span class="agent-uplink__command-index mono">LOG 00</span>
-                            ${renderStatusBadge("empty", "NOM")}
-                          </div>
-                          <p class="agent-uplink__command-line mono">await_chat_input</p>
-                          <p class="agent-uplink__command-body">AETHER will record command recommendations and key mission notes here after the conversation begins.</p>
-                        </article>
-                      `
-                }
-              </div>
-            </div>
-          </aside>
         </div>
       </div>
     </section>
@@ -2120,7 +2089,7 @@ function createNavigationTabs(
     ? mission.eventLog.filter((entry) => entry.level !== "info").length
     : undefined;
   const nutritionAlert = mission && mission.nutrition.caloricCoveragePercent < 100 ? 1 : undefined;
-  const scenarioAlert = mission?.activeScenario ? 1 : warningCount;
+  const scenarioAlert = mission?.activeScenario ? 1 : warningCount && warningCount > 0 ? warningCount : undefined;
   const agentAlert =
     agent && agent.recommendedActions.length > 0
       ? agent.recommendedActions.length
@@ -3260,6 +3229,32 @@ function renderMissionLogEntry(entry: BackendEventLogEntry): string {
   });
 }
 
+function renderEmergencyLogFeed(
+  mission: BackendMissionState,
+  companionLog: CompanionLogItem[],
+): string {
+  const aetherEntries = companionLog
+    .filter((item) => item.kind !== "next")
+    .slice(0, 4)
+    .map((item) => renderCompanionLogEntry(item));
+  const missionEntries = mission.eventLog
+    .slice(0, Math.max(8 - aetherEntries.length, 4))
+    .map((entry) => renderMissionLogEntry(entry));
+
+  return [...aetherEntries, ...missionEntries].join("");
+}
+
+function renderCompanionLogEntry(item: CompanionLogItem): string {
+  return renderLogEntry({
+    type: companionLogType(item),
+    icon: "AE",
+    message: item.body,
+    meta: `AETHER | ${formatCompanionLogKind(item.kind)}`,
+    confidence: item.line.replaceAll("_", " ").toUpperCase(),
+    extra: renderStatusBadge(formatCompanionLogKind(item.kind), item.tone),
+  });
+}
+
 function renderTimelineCard(entry: BackendEventLogEntry, currentMissionDay: number): string {
   const isCurrent = entry.missionDay === currentMissionDay;
   const missionDelta = currentMissionDay - entry.missionDay;
@@ -3676,6 +3671,33 @@ function eventIcon(entry: BackendEventLogEntry): string {
   }
 
   return "INF";
+}
+
+function companionLogType(item: CompanionLogItem): "act" | "wrn" | "alr" | "inf" {
+  if (item.kind === "cmd") {
+    return "act";
+  }
+
+  if (item.tone === "ABT") {
+    return "alr";
+  }
+
+  if (item.tone === "CAU") {
+    return "wrn";
+  }
+
+  return "inf";
+}
+
+function formatCompanionLogKind(kind: CompanionLogItem["kind"]): string {
+  switch (kind) {
+    case "cmd":
+      return "Command";
+    case "next":
+      return "Follow-up";
+    default:
+      return "Insight";
+  }
 }
 
 function alertFromTone(tone: StatusTone): AlertLevel {
