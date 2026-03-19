@@ -9,6 +9,7 @@ import type {
 } from "../mission/mission.types";
 import type {
   PlannerAction,
+  PlannerExecution,
   PlannerOutput,
 } from "./planner.types";
 
@@ -336,13 +337,13 @@ function buildExplanation(
   return `Nutrition Preservation Mode is active because the mission nutrition score is ${before.nutrition.nutritionalCoverageScore} with ${before.nutrition.daysSafe} safe days remaining. The planner protects calories first through potatoes, then protein through beans, and accepts controlled cuts to lower-priority crops when necessary. The recommended actions shift support away from lower-priority zones and forecast the nutrition score moving from ${before.nutrition.nutritionalCoverageScore} to ${after.nutrition.nutritionalCoverageScore}.`;
 }
 
-export function createNutritionPreservationPlan(
+export function createNutritionPreservationExecution(
   sourceState: MissionState,
-): PlannerOutput {
+): PlannerExecution {
   const beforeSnapshot = buildMissionSnapshot(sourceState);
 
   if (!shouldEnterNutritionPreservationMode(beforeSnapshot)) {
-    return {
+    const plan: PlannerOutput = {
       mode: "normal",
       recommendedActions: [],
       nutritionForecast: {
@@ -351,6 +352,12 @@ export function createNutritionPreservationPlan(
       },
       explanation:
         "Nutrition remains above the preservation thresholds, so the backend keeps the mission in normal mode with no deterministic reallocation actions.",
+    };
+
+    return {
+      plan,
+      beforeSnapshot,
+      afterSnapshot: beforeSnapshot,
     };
   }
 
@@ -390,7 +397,7 @@ export function createNutritionPreservationPlan(
   const recommendedActions = actions.slice(0, 3);
   const afterSnapshot = buildMissionSnapshot(afterState);
 
-  return {
+  const plan: PlannerOutput = {
     mode: "nutrition_preservation",
     recommendedActions,
     nutritionForecast: {
@@ -399,8 +406,24 @@ export function createNutritionPreservationPlan(
     },
     explanation: buildExplanation(beforeSnapshot, afterSnapshot, recommendedActions),
   };
+
+  return {
+    plan,
+    beforeSnapshot,
+    afterSnapshot,
+  };
+}
+
+export function createNutritionPreservationPlan(
+  sourceState: MissionState,
+): PlannerOutput {
+  return createNutritionPreservationExecution(sourceState).plan;
 }
 
 export function getCurrentNutritionPreservationPlan(): PlannerOutput {
   return createNutritionPreservationPlan(getCurrentMissionSnapshot());
+}
+
+export function getCurrentNutritionPreservationExecution(): PlannerExecution {
+  return createNutritionPreservationExecution(getCurrentMissionSnapshot());
 }

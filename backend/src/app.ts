@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { agentRoutes } from "./routes/agent";
 import { healthRoutes } from "./routes/health";
 import { missionRoutes } from "./routes/mission";
 import { plannerRoutes } from "./routes/planner";
@@ -18,6 +19,7 @@ export function buildApp() {
     }
   });
 
+  void app.register(agentRoutes);
   void app.register(healthRoutes);
   void app.register(missionRoutes);
   void app.register(scenariosRoutes);

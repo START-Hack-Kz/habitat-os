@@ -8,10 +8,9 @@ export const agentAnalysisFocusValues = [
 
 export const agentAnalyzeRequestSchema = z
   .object({
-    missionId: z.string().trim().min(1),
-    focus: z.enum(agentAnalysisFocusValues),
-    question: z.string().trim().min(1).max(500).optional(),
-    includeEventLog: z.boolean().optional(),
+    autoApply: z.boolean().optional(),
+    includeNotification: z.boolean().optional(),
+    focus: z.enum(agentAnalysisFocusValues).optional(),
   })
   .strict();
 

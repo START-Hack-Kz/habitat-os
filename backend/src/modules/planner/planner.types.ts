@@ -1,4 +1,4 @@
-import type { NutritionStatus } from "../mission/mission.types";
+import type { MissionState, NutritionStatus } from "../mission/mission.types";
 
 export const plannerModeValues = ["normal", "nutrition_preservation"] as const;
 export const plannerActionTypeValues = [
@@ -28,4 +28,10 @@ export interface PlannerOutput {
   recommendedActions: PlannerAction[];
   nutritionForecast: NutritionForecast;
   explanation: string;
+}
+
+export interface PlannerExecution {
+  plan: PlannerOutput;
+  beforeSnapshot: MissionState;
+  afterSnapshot: MissionState;
 }
