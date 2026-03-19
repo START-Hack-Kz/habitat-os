@@ -1,12 +1,12 @@
 import type {
   BackendAgentAction,
   BackendAgentAnalysis,
+  BackendAgentChatResponse,
   BackendMissionState,
   BackendPlannerOutput,
   BackendScenarioCatalogItem,
   BackendScenarioInjectRequest,
   BackendScenarioSeverityOption,
-  BackendSimulationTweakRequest,
   BackendNutritionStatus,
   BackendPlannerChange,
   BackendPlannerStressFlag,
@@ -26,8 +26,9 @@ import type {
 } from "../../shared/schemas/scenarioInput.schema";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3001").replace(/\/$/, "");
+const AI_BASE = (import.meta.env.VITE_AI_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJsonFromBase<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   if (init?.body !== undefined && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -44,6 +45,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJsonFromBase<T>(API_BASE, path, init);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -201,7 +206,7 @@ function mapFailureScenario(
   };
 }
 
-export function mapMissionState(mission: MissionState): BackendMissionState {
+function mapMissionState(mission: MissionState): BackendMissionState {
   const nutrientSolutionLevelPercent = deriveNutrientMixPercent(mission.resources);
   const nutrientMixStatus = deriveNutrientMixStatus(nutrientSolutionLevelPercent);
 
@@ -388,26 +393,10 @@ async function fetchCanonicalPlannerOutput(): Promise<PlannerOutput> {
   });
 }
 
-async function fetchCanonicalAgentDecision(
-  focus: BackendAgentAnalyzeFocus = "mission_overview",
-): Promise<AIDecision> {
-  try {
-    return await requestAiJson<AIDecision>("/ai/analyze", {
-      method: "POST",
-      body: JSON.stringify({ focus }),
-    });
-  } catch {
-    return requestJson<AIDecision>("/api/agent/analyze", {
-      method: "POST",
-      body: JSON.stringify({ focus }),
-    });
-  }
-}
-
-async function fetchCanonicalAgentChat(question: string): Promise<BackendAgentChatResponse> {
-  return requestAiJson<BackendAgentChatResponse>("/ai/chat", {
+async function fetchCanonicalAgentDecision(): Promise<AIDecision> {
+  return requestJson<AIDecision>("/api/agent/analyze", {
     method: "POST",
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({}),
   });
 }
 
@@ -440,11 +429,16 @@ export async function fetchPlannerAnalysis(): Promise<BackendPlannerOutput> {
   };
 }
 
-export async function fetchAgentAnalysis(
-  focus: BackendAgentAnalyzeFocus = "mission_overview",
-): Promise<BackendAgentAnalysis> {
-  const decision = await fetchCanonicalAgentDecision(focus);
+export async function fetchAgentAnalysis(): Promise<BackendAgentAnalysis> {
+  const decision = await fetchCanonicalAgentDecision();
   return mapAgentAnalysis(decision);
+}
+
+export function fetchAgentChat(question: string): Promise<BackendAgentChatResponse> {
+  return requestJsonFromBase<BackendAgentChatResponse>(AI_BASE, "/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
 }
 
 export async function injectScenario(
@@ -467,39 +461,5 @@ export function resetSimulation(): Promise<BackendMissionState> {
   return requestJson<MissionState>("/api/simulation/reset", {
     method: "POST",
     body: JSON.stringify({}),
-  }).then(mapMissionState);
-}
-
-export function tweakSimulation(
-  payload: BackendSimulationTweakRequest,
-): Promise<BackendMissionState> {
-  return requestJson<MissionState>("/api/simulation/tweak", {
-    method: "POST",
-    body: JSON.stringify({
-      zones: payload.zones?.map((zone) => ({
-        zoneId: zone.zoneId,
-        temperature: zone.temperature,
-        humidity: zone.humidity,
-        co2Ppm: zone.co2Ppm,
-        lightPAR: zone.lightPAR,
-        photoperiodHours: zone.photoperiodHours,
-        nutrientPH: zone.nutrientPH,
-        electricalConductivity: zone.electricalConductivity,
-        soilMoisture: zone.soilMoisture,
-      })),
-      resources: payload.resources
-        ? {
-            waterRecyclingEfficiency: payload.resources.waterRecyclingEfficiencyPercent,
-            waterDailyConsumptionL: payload.resources.waterDailyConsumptionL,
-            waterReservoirL: payload.resources.waterReservoirL,
-            energyAvailableKwh: payload.resources.energyAvailableKwh,
-            energyConsumptionKwhPerDay: payload.resources.energyDailyConsumptionKwh,
-            solarGenerationKwhPerDay: payload.resources.solarGenerationKwhPerDay,
-            nutrientN: payload.resources.nutrientN,
-            nutrientP: payload.resources.nutrientP,
-            nutrientK: payload.resources.nutrientK,
-          }
-        : undefined,
-    }),
   }).then(mapMissionState);
 }
