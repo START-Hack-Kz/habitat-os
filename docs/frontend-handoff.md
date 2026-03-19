@@ -69,7 +69,7 @@ What to build:
 - "Days Safe" counter — this is the hero metric, make it big
 - Caloric coverage % with progress bar (target: 100%)
 - Protein coverage % with progress bar
-- Micronutrient adequacy: 4 boolean indicators (Vitamin A, C, K, Folate)
+- Micronutrient adequacy: 7 progress bars (Vitamin A, C, K, Folate, Iron, Potassium, Magnesium) — each shows `produced / target` with a `coveragePercent` bar
 - Nutritional coverage score (0–100) as a gauge or score card
 - Trend arrow: improving / stable / declining
 
