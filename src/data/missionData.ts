@@ -1,0 +1,848 @@
+import aiDecisionExample from "../../shared/examples/aiDecision.example.json";
+import cropProfilesExample from "../../shared/examples/cropProfiles.example.json";
+import missionStateExample from "../../shared/examples/missionState.example.json";
+import apiContractRaw from "../../docs/api-contract.md?raw";
+import frontendHandoffRaw from "../../docs/frontend-handoff.md?raw";
+import mvpScopeRaw from "../../docs/mvp-scope.md?raw";
+import scenarioSchemaRaw from "../../shared/schemas/scenarioInput.schema.ts?raw";
+import type {
+  CropData,
+  CropDependencyRow,
+  CropMetric,
+  CropStageNode,
+  EnvParam,
+  FragilityItem,
+  FullAgentLogItem,
+  GaugeItem,
+  GridCell,
+  HeaderModel,
+  MissionDataBundle,
+  MissionMemoryItem,
+  OverviewMetric,
+  OverviewLogItem,
+  PageContent,
+  PageHero,
+  ScenarioCard,
+  StatusTone,
+  TabDefinition,
+  TimelineEvent,
+  Tradeoff,
+  WaterAllocItem,
+  NutrientRow,
+  ChatReply,
+} from "../types";
+
+type CropProfile = (typeof cropProfilesExample)[number];
+
+const mission = missionStateExample;
+const aiDecision = aiDecisionExample;
+const profileMap = new Map<string, CropProfile>(
+  cropProfilesExample.map((profile) => [profile.cropId, profile]),
+);
+
+const scenarioKeys = getScenarioTypes(scenarioSchemaRaw);
+const endpointCount = countMatches(apiContractRaw, /^### \d+\./gm);
+const panelCount = countMatches(frontendHandoffRaw, /^### Panel \d+/gm);
+
+const cropPalette = [
+  { emoji: "🥬", color: "var(--nom)" },
+  { emoji: "🥔", color: "var(--mars-orange)" },
+  { emoji: "🫛", color: "var(--aero-blue)" },
+  { emoji: "🌱", color: "var(--cau)" },
+  { emoji: "🥬", color: "var(--aero-blue)" },
+  { emoji: "🫐", color: "var(--cau)" },
+  { emoji: "🍅", color: "var(--abt)" },
+  { emoji: "🌾", color: "var(--nom)" },
+];
+
+const pageHero: PageHero = {
+  eyebrow: "Milestone M5",
+  title: "Mission Data Single Source",
+  subtitle: "Shared UI Library + Central Mock Dataset",
+  body:
+    "Every dashboard surface now pulls copy and fixture content from a single typed mission data module informed by docs and shared workflow files.",
+};
+
+const missionProgressPct = Number(
+  ((mission.missionDay / mission.missionDurationTotal) * 100).toFixed(1),
+);
+
+const pageContent: Record<
+  MissionDataBundle["tabs"][number]["id"],
+  PageContent
+> = {
+  overview: {
+    introTitle: "I. Overview",
+    introBody:
+      "Workflow-aware primitives reading from the same mission dataset that powers the rest of the dashboard.",
+  },
+  crops: {
+    introTitle: "II. Crops & Growth",
+    introBody:
+      "Eight crop records extend the challenge story while staying anchored to the shared crop profiles and mission-state zones.",
+  },
+  resources: {
+    introTitle: "III. Resources",
+    introBody:
+      "Environmental and allocation panels now come from typed gauge and allocation arrays in missionData.ts.",
+  },
+  nutrition: {
+    introTitle: "IV. Nutrition",
+    introBody:
+      "Nine nutrient records and dedicated risk gauges keep the nutrition workflow centralized and reusable.",
+  },
+  risk: {
+    introTitle: "V. Risk & Scenarios",
+    introBody:
+      "Risk views are driven by schema-derived scenarios, fragility records, timeline events, and mission memory entries.",
+  },
+  agent: {
+    introTitle: "VI. AI Intelligence",
+    introBody:
+      "Agent logs, tradeoffs, and chat replies are sourced from one typed data module instead of inline page strings.",
+  },
+};
+
+const tabs: TabDefinition[] = [
+  { id: "overview", label: "I. Overview", kicker: `${panelCount} panels`, description: pageContent.overview.introBody },
+  { id: "crops", label: "II. Crops & Growth", kicker: "8 crops", description: pageContent.crops.introBody },
+  { id: "resources", label: "III. Resources", kicker: `${endpointCount} endpoints`, description: pageContent.resources.introBody },
+  { id: "nutrition", label: "IV. Nutrition", kicker: "9 nutrients", description: pageContent.nutrition.introBody },
+  { id: "risk", label: "V. Risk & Scenarios", kicker: "4 scenarios", description: pageContent.risk.introBody, alertCount: 3 },
+  { id: "agent", label: "VI. AI Intelligence", kicker: "7 log items", description: pageContent.agent.introBody },
+];
+
+const headerModel: HeaderModel = {
+  title: "AETHER",
+  subtitle: "Mars Autonomous Greenhouse",
+  missionDay: mission.missionDay,
+  missionDurationTotal: mission.missionDurationTotal,
+  agentState: aiDecision.nutritionPreservationMode ? "ACTIVE" : "IDLE",
+  lastAction: formatRelativeMinutes(mission.lastUpdated, aiDecision.timestamp),
+  systemTone: mapMissionStatus(mission.status),
+  systemLabel: mission.status.replaceAll("_", " "),
+};
+
+const crops: CropData[] = [
+  ...mission.zones.map((zone, index) => {
+    const profile = profileMap.get(zone.cropType);
+    const palette = cropPalette[index];
+
+    return {
+      id: zone.zoneId,
+      emoji: palette.emoji,
+      name: profile?.label ?? zone.cropType,
+      stage: `Day ${zone.growthDay}/${zone.growthCycleTotal}`,
+      zone: zone.zoneId.toUpperCase(),
+      role: formatMissionRole(profile?.missionRole ?? "support"),
+      healthScore: Math.round(zone.growthProgressPercent),
+      healthLevel: mapZoneStatus(zone.status),
+      projectedYieldKg: zone.projectedYieldKg,
+      targetYieldKg: Math.round(
+        (profile?.yieldMax ?? Math.max(zone.projectedYieldKg, 1)) * zone.areaM2,
+      ),
+      allocationPct: zone.allocationPercent,
+      stressLabel: zone.stress.active
+        ? `${zone.stress.type} ${zone.stress.severity}`
+        : "stable",
+      harvestSol: `SOL ${mission.missionDay + (zone.growthCycleTotal - zone.growthDay)}`,
+      sparkPoints: buildSparkPoints(Math.round(zone.growthProgressPercent)),
+      sparkColor: palette.color,
+    };
+  }),
+  {
+    id: "zone-e",
+    emoji: cropPalette[4].emoji,
+    name: "Spinach",
+    stage: "Day 14/32",
+    zone: "ZONE-E",
+    role: "Leaf reserve",
+    healthScore: 83,
+    healthLevel: "NOM",
+    projectedYieldKg: 18,
+    targetYieldKg: 21,
+    allocationPct: 9,
+    stressLabel: "stable",
+    harvestSol: "SOL 105",
+    sparkPoints: [62, 66, 71, 77, 80, 83],
+    sparkColor: cropPalette[4].color,
+  },
+  {
+    id: "zone-f",
+    emoji: cropPalette[5].emoji,
+    name: "Blueberry",
+    stage: "Day 51/88",
+    zone: "ZONE-F",
+    role: "Micronutrient reserve",
+    healthScore: 68,
+    healthLevel: "CAU",
+    projectedYieldKg: 14,
+    targetYieldKg: 20,
+    allocationPct: 7,
+    stressLabel: "light deficit",
+    harvestSol: "SOL 124",
+    sparkPoints: [74, 73, 70, 69, 68, 68],
+    sparkColor: cropPalette[5].color,
+  },
+  {
+    id: "zone-g",
+    emoji: cropPalette[6].emoji,
+    name: "Tomato",
+    stage: "Day 39/74",
+    zone: "ZONE-G",
+    role: "Crew variety",
+    healthScore: 57,
+    healthLevel: "ABT",
+    projectedYieldKg: 22,
+    targetYieldKg: 34,
+    allocationPct: 8,
+    stressLabel: "water deficit",
+    harvestSol: "SOL 122",
+    sparkPoints: [77, 72, 66, 63, 59, 57],
+    sparkColor: cropPalette[6].color,
+  },
+  {
+    id: "zone-h",
+    emoji: cropPalette[7].emoji,
+    name: "Soybean",
+    stage: "Day 28/61",
+    zone: "ZONE-H",
+    role: "Protein reserve",
+    healthScore: 79,
+    healthLevel: "NOM",
+    projectedYieldKg: 26,
+    targetYieldKg: 30,
+    allocationPct: 11,
+    stressLabel: "stable",
+    harvestSol: "SOL 120",
+    sparkPoints: [55, 60, 67, 71, 76, 79],
+    sparkColor: cropPalette[7].color,
+  },
+];
+
+const envParams: EnvParam[] = [
+  {
+    id: "temp",
+    label: "Temperature",
+    value: "23.8",
+    unit: "C",
+    fillPct: 66,
+    fillCol: "var(--cau)",
+    warmFlag: "Zone-A warm",
+  },
+  {
+    id: "humid",
+    label: "Humidity",
+    value: "61",
+    unit: "%",
+    fillPct: 61,
+    fillCol: "var(--nom)",
+    warmFlag: "Within band",
+  },
+  {
+    id: "co2",
+    label: "CO2",
+    value: "950",
+    unit: "ppm",
+    fillPct: 79,
+    fillCol: "var(--aero-blue)",
+    warmFlag: "Boosted",
+  },
+  {
+    id: "par",
+    label: "PAR",
+    value: "200",
+    unit: "umol",
+    fillPct: 50,
+    fillCol: "var(--mars-orange)",
+    warmFlag: "Reduced",
+  },
+];
+
+const overviewLog: OverviewLogItem[] = mission.eventLog.map((event, index) => ({
+  id: event.eventId,
+  type: mapStatusToLogType(mapEventType(event.type)),
+  icon: index === 0 ? "ACT" : index === 1 ? "WRN" : "INF",
+  message: sanitizeText(event.message),
+  meta: `${formatIsoStamp(event.timestamp)} | ${event.zoneId ?? "SYSTEM"}`,
+  confidence: `${index === 0 ? 94 : 78 - index * 6}%`,
+  confidenceLevel: mapEventType(event.type),
+}));
+
+const fullAgentLog: FullAgentLogItem[] = [
+  ...overviewLog.map((item, index) => ({
+    ...item,
+    extra: index === 0 ? "Planner override applied" : "Tracking from workflow examples",
+  })),
+  {
+    id: aiDecision.decisionId,
+    type: "act",
+    icon: "ACT",
+    message: sanitizeText(aiDecision.explanation),
+    meta: `${formatIsoStamp(aiDecision.timestamp)} | AI ANALYZE`,
+    confidence: "96%",
+    confidenceLevel: "CAU",
+    extra: "Nutrition preservation mode",
+  },
+  {
+    id: "log-apply",
+    type: "wrn",
+    icon: "SIM",
+    message: "Awaiting operator approval before applying recommended reallocations.",
+    meta: "Workflow gate | POST /agent/apply",
+    confidence: "88%",
+    confidenceLevel: "CAU",
+    extra: "No auto-apply",
+  },
+  {
+    id: "log-poll",
+    type: "inf",
+    icon: "POLL",
+    message: "Mission state remains poll-driven per the API contract guidance.",
+    meta: "GET /mission/state | 5s cadence",
+    confidence: "91%",
+    confidenceLevel: "NOM",
+    extra: "Frontend assumption",
+  },
+];
+
+const overviewMetrics: OverviewMetric[] = [
+  {
+    id: "mission-progress",
+    label: "Mission Progress",
+    value: `${missionProgressPct}%`,
+    sub: `SOL ${mission.missionDay} of ${mission.missionDurationTotal}`,
+    progress: missionProgressPct,
+    progressColor: "var(--mars-orange)",
+  },
+  {
+    id: "caloric-coverage",
+    label: "Caloric Coverage",
+    value: `${mission.nutrition.caloricCoveragePercent}%`,
+    sub: `${mission.nutrition.dailyCaloriesProduced} / ${mission.nutrition.dailyCaloriesTarget} kcal`,
+    progress: mission.nutrition.caloricCoveragePercent,
+    progressColor: "var(--aero-blue)",
+  },
+  {
+    id: "protein-coverage",
+    label: "Protein Coverage",
+    value: `${mission.nutrition.proteinCoveragePercent}%`,
+    sub: `${mission.nutrition.dailyProteinG} / ${mission.nutrition.dailyProteinTarget} g`,
+    progress: mission.nutrition.proteinCoveragePercent,
+    progressColor: "var(--nom)",
+  },
+  {
+    id: "water-efficiency",
+    label: "Water Efficiency",
+    value: `${mission.resources.waterRecyclingEfficiency}%`,
+    sub: `${mission.resources.waterDaysRemaining} days remaining`,
+    progress: mission.resources.waterRecyclingEfficiency,
+    progressColor:
+      mission.resources.waterRecyclingEfficiency < 70 ? "var(--abt)" : "var(--cau)",
+    level: mission.resources.waterRecyclingEfficiency < 70 ? "ABT" : "CAU",
+  },
+];
+
+const cropMetrics: CropMetric[] = [
+  {
+    id: "active-cultivars",
+    label: "Active Cultivars",
+    value: String(crops.length),
+    sub: "4 mission zones + 4 reserves",
+    progress: 100,
+    progressColor: "var(--nom)",
+  },
+  {
+    id: "next-harvest",
+    label: "Next Harvest",
+    value: getNextHarvestSol(crops),
+    sub: "Radish remains the fastest cycle",
+    progress: 72,
+    progressColor: "var(--cau)",
+    level: "CAU",
+  },
+  {
+    id: "projected-yield",
+    label: "Projected Yield",
+    value: `${getProjectedYieldCoverage(crops)}%`,
+    sub: `${sumProjectedYield(crops)} kg projected`,
+    progress: getProjectedYieldCoverage(crops),
+    progressColor: "var(--aero-blue)",
+    level: getProjectedYieldCoverage(crops) >= 75 ? "NOM" : "CAU",
+  },
+  {
+    id: "at-risk",
+    label: "At-Risk Crops",
+    value: String(crops.filter((crop) => crop.healthLevel !== "NOM").length),
+    sub: "Scenario-sensitive cultivars",
+    progress: 38,
+    progressColor: "var(--abt)",
+    level: "CAU",
+  },
+];
+
+const cropStages: Record<string, CropStageNode[]> = Object.fromEntries(
+  crops.map((crop) => [crop.id, buildCropStages(crop)]),
+);
+
+const cropDependencies: CropDependencyRow[] = [
+  {
+    id: "dep-zone-a",
+    zoneSystem: "Zone-A / Lettuce",
+    functionLabel: "Micronutrient",
+    dependency: "Irrigation + thermal control",
+    fallback: "Reduce harvest cadence",
+    impact: "Folate and vitamin K output falls first.",
+    level: "CAU",
+  },
+  {
+    id: "dep-zone-b",
+    zoneSystem: "Zone-B / Potato",
+    functionLabel: "Calories",
+    dependency: "Water budget + recycle loop",
+    fallback: "Protect allocation priority",
+    impact: "Main caloric runway shortens if yield slips.",
+    level: "NOM",
+  },
+  {
+    id: "dep-zone-c",
+    zoneSystem: "Zone-C / Beans",
+    functionLabel: "Protein",
+    dependency: "Stable NPK uptake",
+    fallback: "Hold pod set under reduced water",
+    impact: "Protein continuity drops without pod retention.",
+    level: "NOM",
+  },
+  {
+    id: "dep-zone-d",
+    zoneSystem: "Zone-D / Radish",
+    functionLabel: "Fast buffer",
+    dependency: "Water + rapid cycle timing",
+    fallback: "Harvest early if stress climbs",
+    impact: "Short-term buffer output delays by 4-5 days.",
+    level: "CAU",
+  },
+  {
+    id: "dep-recycler",
+    zoneSystem: "Water Recycler",
+    functionLabel: "Shared utility",
+    dependency: "Filter efficiency at 60%",
+    fallback: "Ration and redirect flow",
+    impact: "All crop yield coverage compresses under water loss.",
+    level: "CAU",
+  },
+];
+
+const timeline: TimelineEvent[] = [
+  ...mission.eventLog.map((event) => ({
+    id: event.eventId,
+    sol: `SOL ${event.missionDay}`,
+    label: event.zoneId ?? "Mission",
+    dotColor: getToneColor(mapEventType(event.type)),
+    event: sanitizeText(event.message),
+  })),
+  ...[
+    "Scenario injection recommended",
+    "AI analysis window",
+    "Water recovery review",
+    "Crew nutrition checkpoint",
+    "Light cycle compression",
+    "Harvest buffer recalculation",
+    "Mission review board",
+  ].map((event, index) => ({
+    id: `time-${index}`,
+    sol: `SOL ${88 + index}`,
+    label: index % 2 === 0 ? "Planning" : "Ops",
+    dotColor: index % 3 === 0 ? "var(--abt)" : index % 2 === 0 ? "var(--aero-blue)" : "var(--cau)",
+    event,
+  })),
+].slice(0, 10);
+
+const waterAlloc: WaterAllocItem[] = [
+  { id: "wa-1", zoneName: "Zone-A", detail: "20% / 140L", fillPct: 20, fillColor: "var(--cau)" },
+  { id: "wa-2", zoneName: "Zone-B", detail: "40% / 140L", fillPct: 40, fillColor: "var(--nom)" },
+  { id: "wa-3", zoneName: "Zone-C", detail: "30% / 140L", fillPct: 30, fillColor: "var(--aero-blue)" },
+  { id: "wa-4", zoneName: "Zone-D", detail: "10% / 140L", fillPct: 10, fillColor: "var(--nom)" },
+  { id: "wa-5", zoneName: "Reserve", detail: "05% / contingency", fillPct: 5, fillColor: "var(--mars-orange)" },
+  { id: "wa-6", zoneName: "Loop-Beta", detail: "offline", fillPct: 0, fillColor: "var(--abt)", offline: true },
+];
+
+const npkGauges: GaugeItem[] = [
+  { id: "n", label: "Nitrogen", value: `${mission.resources.nutrientN} mg/L`, fillPct: 75, fillColor: "var(--cau)", level: "CAU" },
+  { id: "p", label: "Phosphorus", value: `${mission.resources.nutrientP} mg/L`, fillPct: 56, fillColor: "var(--cau)", level: "CAU" },
+  { id: "k", label: "Potassium", value: `${mission.resources.nutrientK} mg/L`, fillPct: 80, fillColor: "var(--nom)", level: "NOM" },
+];
+
+const energyGauges: GaugeItem[] = [
+  { id: "lights", label: "LED lights", value: "74%", fillPct: 74, fillColor: "var(--aero-blue)", level: "NOM" },
+  { id: "hvac", label: "HVAC", value: "63%", fillPct: 63, fillColor: "var(--cau)", level: "CAU" },
+  { id: "pumps", label: "Water pumps", value: "81%", fillPct: 81, fillColor: "var(--nom)", level: "NOM" },
+  { id: "sensors", label: "Sensors", value: "92%", fillPct: 92, fillColor: "var(--nom)", level: "NOM" },
+];
+
+const riskGauges: GaugeItem[] = [
+  { id: "risk-nutrition", label: "Nutritional", value: "74", fillPct: 74, fillColor: "var(--cau)", level: "CAU" },
+  { id: "risk-crop", label: "Crop failure", value: "61", fillPct: 61, fillColor: "var(--cau)", level: "CAU" },
+  { id: "risk-resource", label: "Resource depletion", value: "83", fillPct: 83, fillColor: "var(--abt)", level: "ABT" },
+  { id: "risk-system", label: "System failure", value: "47", fillPct: 47, fillColor: "var(--aero-blue)", level: "NOM" },
+  { id: "risk-mission", label: "Mission completion", value: "52", fillPct: 52, fillColor: "var(--nom)", level: "NOM" },
+];
+
+const nutrients: NutrientRow[] = [
+  { id: "nut-1", nutrient: "Calories", current: "9500 kcal", target: "12000 kcal", coverage: "79%", coverageLevel: "CAU", source: "Potato backbone" },
+  { id: "nut-2", nutrient: "Protein", current: "310 g", target: "450 g", coverage: "69%", coverageLevel: "CAU", source: "Beans" },
+  { id: "nut-3", nutrient: "Vitamin A", current: "Adequate", target: "Adequate", coverage: "OK", coverageLevel: "NOM", source: "Lettuce" },
+  { id: "nut-4", nutrient: "Vitamin C", current: "Adequate", target: "Adequate", coverage: "OK", coverageLevel: "NOM", source: "Potato + Radish" },
+  { id: "nut-5", nutrient: "Vitamin K", current: "Adequate", target: "Adequate", coverage: "OK", coverageLevel: "NOM", source: "Lettuce" },
+  { id: "nut-6", nutrient: "Folate", current: "Low", target: "Adequate", coverage: "Risk", coverageLevel: "ABT", source: "Lettuce + Beans" },
+  { id: "nut-7", nutrient: "Vitamin D", current: "Synthetic assist", target: "Stable", coverage: "Monitored", coverageLevel: "CAU", source: "Crew reserve" },
+  { id: "nut-8", nutrient: "Protein score", current: "0.69", target: "1.00", coverage: "69%", coverageLevel: "CAU", source: "Beans / Soybean" },
+  { id: "nut-9", nutrient: "Iron", current: "Marginal", target: "Stable", coverage: "Watch", coverageLevel: "CAU", source: "Beans / KB" },
+];
+
+const fragility: FragilityItem[] = [
+  { id: "frag-1", icon: "THM", title: "Thermal loop", score: "74", scoreLevel: "CAU", detail: "Zone-A heat drift remains the fastest path to bolting and water loss." },
+  { id: "frag-2", icon: "RES", title: "Reservoir margin", score: "83", scoreLevel: "ABT", detail: "Water recycling decline is the main system-wide bottleneck in the current workflow." },
+  { id: "frag-3", icon: "MIC", title: "Micronutrient gap", score: "66", scoreLevel: "CAU", detail: "Folate continuity weakens if lettuce is de-prioritized for calorie protection." },
+];
+
+const missionMemory: MissionMemoryItem[] = [
+  { id: "mem-1", sol: "SOL 82", text: "Baseline mission state loaded for mid-mission demo.", tags: ["baseline", "mid-mission"] },
+  { id: "mem-2", sol: "SOL 84", text: "Scenario injection flow approved for three predefined failure types.", tags: ["scenario", "workflow"] },
+  { id: "mem-3", sol: "SOL 86", text: "Operator guidance updated to poll mission state after every major action.", tags: ["polling", "api"] },
+  { id: "mem-4", sol: "SOL 87", text: "Water recycling decline triggered nutrition preservation analysis.", tags: ["water", "nutrition"] },
+  { id: "mem-5", sol: "SOL 88", text: "Shared UI component library adopted across all tabs.", tags: ["ui", "library"] },
+];
+
+const tradeoffs: Tradeoff[] = [
+  {
+    id: "trade-1",
+    title: "Radish / NPK",
+    benefit: "Preserves higher-value calorie and protein crops under water stress.",
+    cost: "Delays rapid radish harvest and weakens fast-turn buffer output.",
+    level: "CAU",
+  },
+  {
+    id: "trade-2",
+    title: "Vitamin D / Energy",
+    benefit: "Cuts lighting demand and extends system runway during energy compression.",
+    cost: "Raises dependence on supplements and slows fresh produce recovery.",
+    level: "ABT",
+  },
+];
+
+const scenarios: ScenarioCard[] = [
+  {
+    id: "scn-dust",
+    key: "dust",
+    label: "Dust load",
+    before: ["Solar gain stable", "HVAC within nominal band"],
+    after: ["PAR compression", "HVAC draw increased"],
+    response: "Shift light schedule and defer non-essential cycles until generation recovers.",
+    level: "CAU",
+  },
+  {
+    id: "scn-water",
+    key: "water",
+    label: "Water decline",
+    before: ["Recycling above threshold", "Normal irrigation cadence"],
+    after: ["Reservoir loss accelerating", "Rationing required"],
+    response: "Protect potato and bean zones first; reduce low-calorie water use.",
+    level: "ABT",
+  },
+  {
+    id: "scn-power",
+    key: "power",
+    label: "Power budget",
+    before: ["Lighting full spectrum", "Pump overlap allowed"],
+    after: ["Lighting compressed", "Loads staggered"],
+    response: "Trim non-critical loads and shift actions to lower-draw windows.",
+    level: "CAU",
+  },
+  {
+    id: "scn-cascade",
+    key: "cascade",
+    label: "Cascade failure",
+    before: ["Single bottleneck", "Localized risk"],
+    after: ["Cross-system coupling", "Mission-wide instability"],
+    response: "Lock to preservation mode, simplify goals, and maintain crew nutrition first.",
+    level: "ABT",
+  },
+];
+
+const chatReplies: ChatReply[] = [
+  { id: "chat-1", role: "system", text: "Mission context loaded from shared baseline state." },
+  { id: "chat-2", role: "user", text: "Analyze the active scenario with a nutrition focus." },
+  { id: "chat-3", role: "agent", text: sanitizeText(aiDecision.riskSummary) },
+  { id: "chat-4", role: "agent", text: sanitizeText(aiDecision.comparison.summary) },
+  { id: "chat-5", role: "system", text: "Awaiting operator confirmation before POST /agent/apply." },
+];
+
+const ghCells: GridCell[] = Array.from({ length: 16 }, (_, index) => ({
+  id: `cell-${index + 1}`,
+  emoji: index % 5 === 0 ? "💧" : index % 4 === 0 ? "🌡️" : index % 3 === 0 ? "🪴" : "🔆",
+  label: `Cell ${String(index + 1).padStart(2, "0")}`,
+  statusClass:
+    index % 7 === 0 ? "status-abt" : index % 3 === 0 ? "status-cau" : "status-nom",
+}));
+
+const overviewGhCells: GridCell[] = [
+  { id: "cell-a1", emoji: "L", label: "A1", statusClass: "status-nom" },
+  { id: "cell-a2", emoji: "W", label: "A2", statusClass: "status-nom" },
+  { id: "cell-a3", emoji: "S", label: "A3", statusClass: "status-nom" },
+  { id: "cell-a4", emoji: "P", label: "A4", statusClass: "status-nom" },
+  { id: "cell-b1", emoji: "H", label: "B1", statusClass: "status-nom" },
+  { id: "cell-b2", emoji: "H", label: "B2", statusClass: "status-cau" },
+  { id: "cell-b3", emoji: "W", label: "B3", statusClass: "status-nom" },
+  { id: "cell-b4", emoji: "X", label: "B4", statusClass: "status-abt" },
+  { id: "cell-e1", emoji: "L", label: "E1", statusClass: "status-nom" },
+  { id: "cell-e2", emoji: "C", label: "E2", statusClass: "status-nom" },
+  { id: "cell-e3", emoji: "W", label: "E3", statusClass: "status-nom" },
+  { id: "cell-e4", emoji: "P", label: "E4", statusClass: "status-nom" },
+  {
+    id: "cell-f1",
+    emoji: "--",
+    label: "F1",
+    statusClass: "status-cau",
+    modifierClass: "gh-cell--ghost",
+  },
+  {
+    id: "cell-f2",
+    emoji: "--",
+    label: "F2",
+    statusClass: "status-cau",
+    modifierClass: "gh-cell--ghost",
+  },
+  { id: "cell-f3", emoji: "M", label: "F3", statusClass: "status-nom" },
+  { id: "cell-f4", emoji: "W", label: "F4", statusClass: "status-nom" },
+];
+
+export const missionData: MissionDataBundle = {
+  headerModel,
+  tabs,
+  pageHero,
+  pageContent,
+  overviewAlert: {
+    label: "Workflow",
+    body: "Shared primitives are now validated against the docs and example mission workflow.",
+    level: "cau",
+  },
+  riskAlert: {
+    label: "Active Scenario",
+    body: sanitizeText(mission.activeScenario?.description ?? "No active scenario."),
+    level: "abt",
+  },
+  crops,
+  envParams,
+  overviewLog,
+  fullAgentLog,
+  timeline,
+  waterAlloc,
+  npkGauges,
+  energyGauges,
+  riskGauges,
+  nutrients,
+  fragility,
+  missionMemory,
+  tradeoffs,
+  scenarios,
+  chatReplies,
+  ghCells: overviewGhCells,
+  overviewMetrics,
+  cropMetrics,
+  cropStages,
+  cropDependencies,
+  repoSignals: {
+    panelCount,
+    endpointCount,
+    scenarioTypeCount: scenarioKeys.length,
+  },
+};
+
+export { chatReplies };
+export { crops };
+export { cropDependencies };
+export { cropMetrics };
+export { cropStages };
+export { energyGauges };
+export { envParams };
+export { fragility };
+export { fullAgentLog };
+export const overviewGridCells = missionData.ghCells;
+export const { overviewAlert } = missionData;
+export { overviewLog };
+export { headerModel };
+export { missionMemory };
+export { npkGauges };
+export { nutrients };
+export { overviewMetrics };
+export const pageContentByTab = missionData.pageContent;
+export const missionHero = missionData.pageHero;
+export const { repoSignals } = missionData;
+export const { riskAlert } = missionData;
+export { riskGauges };
+export { scenarios };
+export const missionTabs = missionData.tabs;
+export { timeline };
+export { tradeoffs };
+export { waterAlloc };
+
+function countMatches(source: string, pattern: RegExp): number {
+  return Array.from(source.matchAll(pattern)).length;
+}
+
+function getScenarioTypes(source: string): string[] {
+  const match = source.match(/export type ScenarioType = ([^;]+);/);
+  if (!match) {
+    return [];
+  }
+  return match[1]
+    .split("|")
+    .map((item) => item.trim().replaceAll('"', ""))
+    .filter(Boolean);
+}
+
+function mapMissionStatus(status: string): StatusTone {
+  switch (status) {
+    case "nominal":
+      return "NOM";
+    case "warning":
+    case "nutrition_preservation_mode":
+      return "CAU";
+    case "critical":
+      return "ABT";
+    default:
+      return "CAU";
+  }
+}
+
+function mapZoneStatus(status: string): StatusTone {
+  switch (status) {
+    case "healthy":
+    case "harvesting":
+      return "NOM";
+    case "stressed":
+    case "replanting":
+      return "CAU";
+    case "critical":
+    case "offline":
+      return "ABT";
+    default:
+      return "CAU";
+  }
+}
+
+function mapEventType(type: string): StatusTone {
+  switch (type) {
+    case "critical":
+    case "ai_action":
+      return "ABT";
+    case "warning":
+    case "scenario_injected":
+    case "replant":
+      return "CAU";
+    default:
+      return "NOM";
+  }
+}
+
+function mapStatusToLogType(status: StatusTone): OverviewLogItem["type"] {
+  switch (status) {
+    case "ABT":
+      return "alr";
+    case "CAU":
+      return "wrn";
+    case "NOM":
+      return "inf";
+    default:
+      return "act";
+  }
+}
+
+function getToneColor(status: StatusTone): string {
+  switch (status) {
+    case "NOM":
+      return "var(--nom)";
+    case "CAU":
+      return "var(--cau)";
+    case "ABT":
+      return "var(--abt)";
+    default:
+      return "var(--aero-blue)";
+  }
+}
+
+function buildCropStages(crop: CropData): CropStageNode[] {
+  const progress = crop.healthScore / 100;
+  const activeIndex = Math.min(4, Math.max(0, Math.floor(progress * 5)));
+  const baseSol = Number.parseInt(crop.harvestSol.replace("SOL ", ""), 10) - 16;
+  const labels = ["Seed", "Root", "Canopy", "Bulk", "Harvest"];
+
+  return labels.map((label, index) => ({
+    id: `${crop.id}-${label.toLowerCase()}`,
+    label,
+    sol: `SOL ${baseSol + index * 4}`,
+    state: index < activeIndex ? "done" : index === activeIndex ? "active" : "future",
+  }));
+}
+
+function getNextHarvestSol(items: CropData[]): string {
+  const next = Math.min(
+    ...items.map((crop) => Number.parseInt(crop.harvestSol.replace("SOL ", ""), 10)),
+  );
+  return `SOL ${next}`;
+}
+
+function sumProjectedYield(items: CropData[]): number {
+  return Math.round(items.reduce((sum, crop) => sum + crop.projectedYieldKg, 0));
+}
+
+function getProjectedYieldCoverage(items: CropData[]): number {
+  const projected = items.reduce((sum, crop) => sum + crop.projectedYieldKg, 0);
+  const target = items.reduce((sum, crop) => sum + crop.targetYieldKg, 0);
+
+  return Math.round((projected / target) * 100);
+}
+
+function formatMissionRole(value: string): string {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildSparkPoints(seed: number): number[] {
+  return [seed - 18, seed - 10, seed - 6, seed - 3, seed - 1, seed].map((value) =>
+    Math.max(24, value),
+  );
+}
+
+function sanitizeText(value: string): string {
+  return value
+    .replaceAll("Â°C", " C")
+    .replaceAll("Âµmol/mÂ²/s", " umol/m2/s")
+    .replaceAll("â€”", "-")
+    .replaceAll("â€“", "-")
+    .replaceAll("Ã—", "x")
+    .replaceAll("Â·", "·")
+    .replaceAll("â†’", "->");
+}
+
+function formatRelativeMinutes(fromIso: string, toIso: string): string {
+  const minutes = Math.max(
+    0,
+    Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 60000),
+  );
+  return `${minutes}m ago`;
+}
+
+function formatIsoStamp(value: string): string {
+  const date = new Date(value);
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const hours = String(date.getUTCHours()).padStart(2, "0");
+  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${day}/${month} ${hours}:${minutes}Z`;
+}
+
+void mvpScopeRaw;
