@@ -61,15 +61,15 @@ const slotPositions: Array<{ x: number; y: number }> = [
 
 const dogPatrolPath: HabitatDogTrailPoint[] = [
   { x: 25, y: 92 },
-  { x: 25, y: 8 },
-  { x: 49, y: 8 },
-  { x: 73, y: 8 },
+  { x: 25, y: 4.5 },
+  { x: 49, y: 4.5 },
+  { x: 73, y: 4.5 },
   { x: 73, y: 92 },
-  { x: 73, y: 8 },
-  { x: 49, y: 8 },
+  { x: 73, y: 4.5 },
+  { x: 49, y: 4.5 },
   { x: 49, y: 92 },
-  { x: 49, y: 8 },
-  { x: 25, y: 8 },
+  { x: 49, y: 4.5 },
+  { x: 25, y: 4.5 },
   { x: 25, y: 92 },
 ];
 

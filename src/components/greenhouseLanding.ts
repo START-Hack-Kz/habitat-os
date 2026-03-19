@@ -46,6 +46,13 @@ interface GreenhouseHoverSnapshot {
   metrics: Array<{ label: string; value: string; tone: StatusTone }>;
 }
 
+interface HabitatPlacement {
+  x: number;
+  y: number;
+  z: number;
+  rotY: number;
+}
+
 type HabitatBuilder = (tone: THREE.ColorRepresentation) => {
   shellGeometry: THREE.BufferGeometry;
   shellScale?: [number, number, number];
@@ -235,12 +242,14 @@ export function mountGreenhouseLanding(
     }
   });
 
-  const habitatPlacements = [
+  const habitatPlacements: HabitatPlacement[] = [
     { x: -5.4, z: 2.7, y: 0.28, rotY: -0.18 },
-    { x: 1.65, z: 2.0, y: 0.24, rotY: 0.14 },
-    { x: -2.3, z: -3.6, y: 0.2, rotY: -0.04 },
+    { x: 1.65, z: 2.0, y: 0.32, rotY: 0.14 },
+    { x: -2.3, z: -3.6, y: 0.28, rotY: -0.04 },
     { x: 5.9, z: -2.9, y: 0.32, rotY: 0.24 },
   ];
+
+  scene.add(createHabitatWalkwayNetwork(habitatPlacements));
 
   options.greenhouses.forEach((greenhouse, index) => {
     const label = labelMap.get(greenhouse.id);
@@ -314,8 +323,7 @@ export function mountGreenhouseLanding(
       const isHovered = habitat.id === hoveredId;
       habitat.hoverMix = THREE.MathUtils.damp(habitat.hoverMix, isHovered ? 1 : 0, 4.8, 1 / 60);
 
-      const bob = Math.sin(elapsed * 0.65 + habitat.pulseOffset) * 0.07;
-      habitat.root.position.y = habitat.baseY + bob + habitat.hoverMix * 0.32;
+      habitat.root.position.y = habitat.baseY + habitat.hoverMix * 0.32;
       habitat.root.rotation.y =
         habitat.baseRotationY + Math.sin(elapsed * 0.2 + index * 0.7) * 0.06 + habitat.hoverMix * 0.08;
       habitat.root.rotation.x = 0.02 + habitat.hoverMix * 0.04;
@@ -894,6 +902,145 @@ function createMountainShapeGeometry(xs: number[], ys: number[]): THREE.BufferGe
   return new THREE.ShapeGeometry(shape);
 }
 
+function createHabitatWalkwayNetwork(placements: HabitatPlacement[]): THREE.Object3D {
+  const group = new THREE.Group();
+  const deckY = 0.24;
+  const deckThickness = 0.1;
+  const supportY = 0.125;
+
+  const baseMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd8d3c9,
+    roughness: 0.84,
+    metalness: 0.06,
+    emissive: 0x75695a,
+    emissiveIntensity: 0.06,
+  });
+  const supportMaterial = new THREE.MeshStandardMaterial({
+    color: 0x7e685c,
+    roughness: 0.92,
+    metalness: 0.04,
+    emissive: 0x382a24,
+    emissiveIntensity: 0.04,
+  });
+  const stripeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xf1eee7,
+    roughness: 0.52,
+    metalness: 0.08,
+    emissive: 0x8d8176,
+    emissiveIntensity: 0.08,
+  });
+
+  const addPad = (x: number, z: number, radius = 0.62) => {
+    const support = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius * 0.94, radius, deckThickness * 0.78, 24),
+      supportMaterial,
+    );
+    support.position.set(x, supportY, z);
+    group.add(support);
+
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.08, deckThickness, 24), baseMaterial);
+    pad.position.set(x, deckY, z);
+    group.add(pad);
+
+    const inner = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius * 0.56, radius * 0.56, 0.02, 20),
+      stripeMaterial,
+    );
+    inner.position.set(x, deckY + deckThickness * 0.58, z);
+    group.add(inner);
+  };
+
+  const addSegment = (start: THREE.Vector3, end: THREE.Vector3, width = 0.72) => {
+    const delta = end.clone().sub(start);
+    const length = delta.length();
+    if (length <= 0.001) {
+      return;
+    }
+
+    const angle = Math.atan2(delta.x, delta.z);
+    const center = start.clone().lerp(end, 0.5);
+
+    const support = new THREE.Mesh(
+      new THREE.BoxGeometry(width * 0.86, deckThickness * 0.72, length * 0.98),
+      supportMaterial,
+    );
+    support.position.set(center.x, supportY, center.z);
+    support.rotation.y = angle;
+    group.add(support);
+
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(width, deckThickness, length), baseMaterial);
+    slab.position.set(center.x, deckY, center.z);
+    slab.rotation.y = angle;
+    group.add(slab);
+
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(width * 0.46, 0.018, length * 0.9),
+      stripeMaterial,
+    );
+    stripe.position.set(center.x, deckY + deckThickness * 0.58, center.z);
+    stripe.rotation.y = angle;
+    group.add(stripe);
+  };
+
+  const zoneA = placements[0];
+  const zoneB = placements[1];
+  const zoneC = placements[2];
+  const zoneD = placements[3];
+
+  if (!zoneA || !zoneB || !zoneC || !zoneD) {
+    return group;
+  }
+
+  const aDock = new THREE.Vector3(zoneA.x + 1.54, 0, zoneA.z + 0.04);
+  const bDockWest = new THREE.Vector3(zoneB.x - 1.5, 0, zoneB.z + 0.04);
+  const bDockSouth = new THREE.Vector3(zoneB.x + 0.06, 0, zoneB.z + 1.48);
+  const cDockNorth = new THREE.Vector3(zoneC.x + 0.03, 0, zoneC.z - 1.58);
+  const cDockEast = new THREE.Vector3(zoneC.x + 1.52, 0, zoneC.z + 0.04);
+  const dDock = new THREE.Vector3(zoneD.x - 1.52, 0, zoneD.z + 0.02);
+  const hqDock = new THREE.Vector3(10.0, 0, -6.42);
+
+  const topLeft = new THREE.Vector3(-3.88, 0, 2.48);
+  const topMid = new THREE.Vector3(-0.18, 0, 2.48);
+  const rightMid = new THREE.Vector3(3.82, 0, -0.08);
+  const bottomMid = new THREE.Vector3(-0.18, 0, -3.06);
+  const leftMid = new THREE.Vector3(-3.92, 0, -1.78);
+  const hqJunction = new THREE.Vector3(7.88, 0, -4.56);
+
+  [
+    aDock,
+    bDockWest,
+    bDockSouth,
+    cDockNorth,
+    cDockEast,
+    dDock,
+    hqDock,
+    topLeft,
+    topMid,
+    rightMid,
+    bottomMid,
+    leftMid,
+    hqJunction,
+  ].forEach((point) => addPad(point.x, point.z, point === hqDock ? 0.8 : 0.56));
+
+  const networkSegments: Array<[THREE.Vector3, THREE.Vector3]> = [
+    [aDock, topLeft],
+    [topLeft, topMid],
+    [topMid, bDockWest],
+    [bDockSouth, rightMid],
+    [rightMid, dDock],
+    [dDock, bottomMid],
+    [bottomMid, cDockEast],
+    [cDockNorth, leftMid],
+    [leftMid, topLeft],
+    [dDock, hqJunction],
+    [hqJunction, hqDock],
+  ];
+
+  networkSegments.forEach(([start, end]) => addSegment(start, end));
+
+  return group;
+}
+
 function createHabitat(summary: GreenhouseSummary, label: HTMLElement): HabitatInstance {
   const tone = greenhouseToneColor(summary.status);
   const builder = habitatBuilders[summary.silhouette];
@@ -944,11 +1091,11 @@ function createHabitat(summary: GreenhouseSummary, label: HTMLElement): HabitatI
   const base = new THREE.Mesh(
     new THREE.CylinderGeometry(1.48, 1.68, 0.18, 28),
     new THREE.MeshStandardMaterial({
-      color: 0x5a3028,
-      roughness: 0.95,
-      metalness: 0.04,
-      emissive: 0x2a1512,
-      emissiveIntensity: 0.08,
+      color: 0xd8d2c8,
+      roughness: 0.82,
+      metalness: 0.06,
+      emissive: 0x73685f,
+      emissiveIntensity: 0.05,
     }),
   );
   if (spec.platformScale) {
@@ -959,11 +1106,11 @@ function createHabitat(summary: GreenhouseSummary, label: HTMLElement): HabitatI
   const berm = new THREE.Mesh(
     new THREE.TorusGeometry(1.72, 0.16, 14, 64),
     new THREE.MeshStandardMaterial({
-      color: 0x6e3d31,
-      roughness: 1,
-      metalness: 0.02,
-      emissive: 0x2a1512,
-      emissiveIntensity: 0.06,
+      color: 0xc9c2b7,
+      roughness: 0.92,
+      metalness: 0.03,
+      emissive: 0x665950,
+      emissiveIntensity: 0.04,
     }),
   );
   berm.rotation.x = Math.PI / 2;
@@ -1062,7 +1209,7 @@ const habitatBuilders: Record<GreenhouseSummary["silhouette"], HabitatBuilder> =
     shellScale: [2.42, 0.6, 1.06],
     shellPosition: [0.1, 0.02, 0],
     frameExtras: [
-      ...createDomeLattice(2.28, 0.8, 1.0, 9, 4),
+      ...createDomeLattice(2.78, 0.82, 0.94, 10, 4),
     ],
     garden: createInteriorGarden("vault"),
     platformScale: [1.68, 1, 1.0],
@@ -1077,8 +1224,7 @@ const habitatBuilders: Record<GreenhouseSummary["silhouette"], HabitatBuilder> =
     shellScale: [1.42, 0.96, 1.26],
     shellPosition: [0, 0.06, 0],
     frameExtras: [
-      ...createDomeLattice(1.34, 1.14, 1.18, 8, 5),
-      createRaisedFrame(),
+      ...createDomeLattice(1.72, 1.22, 1.48, 9, 5),
     ],
     garden: createInteriorGarden("spire"),
     platformScale: [1.26, 1, 1.12],

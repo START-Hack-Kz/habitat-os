@@ -52,6 +52,7 @@ interface AppState {
   activeTab: TabId;
   selectedZoneId: string;
   selectedOverviewHabitatId: string;
+  overviewHabitatCollapsed: boolean;
   selectedScenarioType: BackendScenarioCatalogItem["scenarioType"] | "";
   mission: BackendMissionState | null;
   scenarios: BackendScenarioCatalogItem[];
@@ -151,6 +152,7 @@ export function renderApp(root: HTMLDivElement): void {
     activeTab: "overview",
     selectedZoneId: "",
     selectedOverviewHabitatId: initialRoute.greenhouseId,
+    overviewHabitatCollapsed: false,
     selectedScenarioType: "",
     mission: null,
     scenarios: [],
@@ -230,6 +232,7 @@ export function renderApp(root: HTMLDivElement): void {
     const homeTrigger = target.closest<HTMLElement>("[data-route-home]");
     const zoneTrigger = target.closest<HTMLElement>("[data-zone-select]");
     const habitatTabTrigger = target.closest<HTMLElement>("[data-overview-habitat]");
+    const habitatToggleTrigger = target.closest<HTMLElement>("[data-overview-habitat-toggle]");
     const injectTrigger = target.closest<HTMLElement>("[data-scenario-inject]");
     const resetTrigger = target.closest<HTMLElement>("[data-scenario-reset]");
     const plannerRefresh = target.closest<HTMLElement>("[data-planner-refresh]");
@@ -280,6 +283,12 @@ export function renderApp(root: HTMLDivElement): void {
         draw();
       }
 
+      return;
+    }
+
+    if (habitatToggleTrigger) {
+      state.overviewHabitatCollapsed = !state.overviewHabitatCollapsed;
+      draw();
       return;
     }
 
@@ -690,7 +699,14 @@ function renderPage(state: AppState): string {
 
   switch (state.activeTab) {
     case "overview":
-      return renderOverview(displayMission, state.planner, state.agent, state.agentAnalyzing, state.selectedOverviewHabitatId);
+      return renderOverview(
+        displayMission,
+        state.planner,
+        state.agent,
+        state.agentAnalyzing,
+        state.selectedOverviewHabitatId,
+        state.overviewHabitatCollapsed,
+      );
     case "crops":
       return renderCrops(displayMission, state.selectedZoneId);
     case "resources":
@@ -711,7 +727,14 @@ function renderPage(state: AppState): string {
         state.agentAnalysisLabel,
       );
     default:
-      return renderOverview(displayMission, state.planner, state.agent, state.agentAnalyzing, state.selectedOverviewHabitatId);
+      return renderOverview(
+        displayMission,
+        state.planner,
+        state.agent,
+        state.agentAnalyzing,
+        state.selectedOverviewHabitatId,
+        state.overviewHabitatCollapsed,
+      );
   }
 }
 
@@ -721,6 +744,7 @@ function renderOverview(
   agent: BackendAgentAnalysis | null,
   agentAnalyzing: boolean,
   selectedHabitatId: string,
+  overviewHabitatCollapsed: boolean,
 ): string {
   const metrics = buildOverviewMetrics(mission);
   const habitats = greenhouseCatalog.map((greenhouse) =>
@@ -748,7 +772,7 @@ function renderOverview(
             `${selectedHabitat.cropLabel} lane active`,
             selectedHabitat.statusTone,
           ),
-          children: renderHabitatOperationsWindow(selectedHabitat, habitats),
+          children: renderHabitatOperationsWindow(selectedHabitat, habitats, overviewHabitatCollapsed),
         })}
       </div>
 
@@ -843,6 +867,7 @@ function renderOverview(
 function renderHabitatOperationsWindow(
   selectedHabitat: HabitatOperationsModel,
   habitats: HabitatOperationsModel[],
+  collapsed: boolean,
 ): string {
   const dogPath = selectedHabitat.dogPath
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
@@ -850,8 +875,9 @@ function renderHabitatOperationsWindow(
   const dogPathId = `habitat-dog-route-${selectedHabitat.habitatId}`;
 
   return `
-    <div class="habitat-window">
-      <div class="habitat-window__tabs" role="tablist" aria-label="Habitat operations tabs">
+    <div class="habitat-window ${collapsed ? "is-collapsed" : ""}">
+      <div class="habitat-window__tabs-row">
+        <div class="habitat-window__tabs" role="tablist" aria-label="Habitat operations tabs">
         ${habitats
           .map(
             (habitat) => `
@@ -866,8 +892,18 @@ function renderHabitatOperationsWindow(
             `,
           )
           .join("")}
+        </div>
+        <button
+          type="button"
+          class="habitat-window__toggle"
+          data-overview-habitat-toggle="true"
+          aria-expanded="${collapsed ? "false" : "true"}"
+        >
+          ${collapsed ? "Expand" : "Minimize"}
+        </button>
       </div>
 
+      ${collapsed ? "" : `
       <div class="habitat-window__frame">
         <div class="habitat-window__header">
           <div class="habitat-window__identity">
@@ -901,15 +937,15 @@ function renderHabitatOperationsWindow(
           <svg class="habitat-window__dog-path" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <path id="${dogPathId}" class="habitat-window__dog-route" d="${dogPath}" pathLength="100"></path>
             <g class="habitat-window__dog-runner">
-              <line class="habitat-window__dog-tail-glow" x1="-3.25" y1="0" x2="-1.1" y2="0"></line>
-              <line class="habitat-window__dog-tail" x1="-2.45" y1="0" x2="-0.95" y2="0"></line>
+              <line class="habitat-window__dog-tail-glow" x1="-2.1" y1="0" x2="-0.78" y2="0"></line>
+              <line class="habitat-window__dog-tail" x1="-1.55" y1="0" x2="-0.7" y2="0"></line>
               <g class="habitat-window__dog-icon">
-                <ellipse cx="0" cy="0" rx="1.05" ry="0.55"></ellipse>
-                <circle cx="1.04" cy="-0.08" r="0.38"></circle>
-                <polygon points="0.98,-0.42 0.8,-0.92 1.24,-0.58"></polygon>
-                <line x1="-0.42" y1="0.4" x2="-0.62" y2="0.95"></line>
-                <line x1="0.24" y1="0.4" x2="0.06" y2="0.95"></line>
-                <line x1="-1.06" y1="-0.12" x2="-1.42" y2="-0.62"></line>
+                <circle class="habitat-window__dog-face" cx="0" cy="0" r="0.72"></circle>
+                <polygon class="habitat-window__dog-ear" points="-0.34,-0.38 -0.78,-0.98 -0.12,-0.6"></polygon>
+                <polygon class="habitat-window__dog-ear" points="0.34,-0.38 0.78,-0.98 0.12,-0.6"></polygon>
+                <circle class="habitat-window__dog-eye" cx="-0.22" cy="-0.06" r="0.08"></circle>
+                <circle class="habitat-window__dog-eye" cx="0.22" cy="-0.06" r="0.08"></circle>
+                <circle class="habitat-window__dog-nose" cx="0" cy="0.15" r="0.1"></circle>
               </g>
               <animateMotion dur="18s" repeatCount="indefinite" rotate="auto">
                 <mpath href="#${dogPathId}" />
@@ -934,6 +970,7 @@ function renderHabitatOperationsWindow(
           <div class="habitat-window__footer-note">${escapeHtml(selectedHabitat.summary)}</div>
         </div>
       </div>
+      `}
     </div>
   `;
 }
