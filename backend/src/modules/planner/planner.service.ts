@@ -248,18 +248,6 @@ function findSecondaryPriorityZone(state: MissionState): MissionState["zones"][n
   return getPrioritySortedZones(state, false)[1];
 }
 
-function getScenarioZone(
-  state: MissionState,
-): MissionState["zones"][number] | undefined {
-  const zoneId = state.activeScenario?.affectedZones[0];
-
-  if (!zoneId) {
-    return undefined;
-  }
-
-  return state.zones.find((zone) => zone.zoneId === zoneId);
-}
-
 function getPriorityRecipients(
   state: MissionState,
   excludedZoneId: string,

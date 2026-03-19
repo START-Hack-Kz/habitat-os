@@ -59,6 +59,13 @@ export function applySimulationTweak(
             override.electricalConductivity ?? zone.sensors.electricalConductivity,
           soilMoisture: override.soilMoisture ?? zone.sensors.soilMoisture,
         },
+        stress: {
+          active: false,
+          type: "none",
+          severity: "none",
+          boltingRisk: false,
+          symptoms: [],
+        },
       };
     });
   }
@@ -68,6 +75,19 @@ export function applySimulationTweak(
       ...state.resources,
       ...request.resources,
     };
+    state.zones = state.zones.map((zone) => ({
+      ...zone,
+      stress:
+        zone.status === "offline"
+          ? zone.stress
+          : {
+              active: false,
+              type: "none",
+              severity: "none",
+              boltingRisk: false,
+              symptoms: [],
+            },
+    }));
   }
 
   const timestamp = deriveTimestamp(state);

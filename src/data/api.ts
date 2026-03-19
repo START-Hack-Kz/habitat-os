@@ -6,6 +6,7 @@ import type {
   BackendScenarioCatalogItem,
   BackendScenarioInjectRequest,
   BackendScenarioSeverityOption,
+  BackendSimulationTweakRequest,
   BackendNutritionStatus,
   BackendPlannerChange,
   BackendPlannerStressFlag,
@@ -24,7 +25,21 @@ import type {
   ScenarioInjectRequest,
 } from "../../shared/schemas/scenarioInput.schema";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3001").replace(/\/$/, "");
+function readApiBaseOverride(): string | undefined {
+  const viteOverride = (import.meta as ImportMeta & { env?: ImportMetaEnv }).env?.VITE_API_BASE_URL;
+
+  if (viteOverride) {
+    return viteOverride;
+  }
+
+  const runtimeProcess = globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  };
+
+  return runtimeProcess.process?.env?.VITE_API_BASE_URL;
+}
+
+const API_BASE = (readApiBaseOverride() ?? "http://127.0.0.1:3001").replace(/\/$/, "");
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
@@ -200,7 +215,7 @@ function mapFailureScenario(
   };
 }
 
-function mapMissionState(mission: MissionState): BackendMissionState {
+export function mapMissionState(mission: MissionState): BackendMissionState {
   const nutrientSolutionLevelPercent = deriveNutrientMixPercent(mission.resources);
   const nutrientMixStatus = deriveNutrientMixStatus(nutrientSolutionLevelPercent);
 
@@ -448,5 +463,39 @@ export function resetSimulation(): Promise<BackendMissionState> {
   return requestJson<MissionState>("/api/simulation/reset", {
     method: "POST",
     body: JSON.stringify({}),
+  }).then(mapMissionState);
+}
+
+export function tweakSimulation(
+  payload: BackendSimulationTweakRequest,
+): Promise<BackendMissionState> {
+  return requestJson<MissionState>("/api/simulation/tweak", {
+    method: "POST",
+    body: JSON.stringify({
+      zones: payload.zones?.map((zone) => ({
+        zoneId: zone.zoneId,
+        temperature: zone.temperature,
+        humidity: zone.humidity,
+        co2Ppm: zone.co2Ppm,
+        lightPAR: zone.lightPAR,
+        photoperiodHours: zone.photoperiodHours,
+        nutrientPH: zone.nutrientPH,
+        electricalConductivity: zone.electricalConductivity,
+        soilMoisture: zone.soilMoisture,
+      })),
+      resources: payload.resources
+        ? {
+            waterRecyclingEfficiency: payload.resources.waterRecyclingEfficiencyPercent,
+            waterDailyConsumptionL: payload.resources.waterDailyConsumptionL,
+            waterReservoirL: payload.resources.waterReservoirL,
+            energyAvailableKwh: payload.resources.energyAvailableKwh,
+            energyConsumptionKwhPerDay: payload.resources.energyDailyConsumptionKwh,
+            solarGenerationKwhPerDay: payload.resources.solarGenerationKwhPerDay,
+            nutrientN: payload.resources.nutrientN,
+            nutrientP: payload.resources.nutrientP,
+            nutrientK: payload.resources.nutrientK,
+          }
+        : undefined,
+    }),
   }).then(mapMissionState);
 }

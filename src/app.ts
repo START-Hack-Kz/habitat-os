@@ -7,10 +7,22 @@ import {
   fetchScenarioCatalog,
   injectScenario,
   resetSimulation,
+  tweakSimulation,
 } from "./data/api";
 import { getZoneCompositionProfile } from "./data/zoneComposition";
+import {
+  type AutoRemediationPlan,
+  createAutoRemediationPlan,
+  createAutomatedResponse,
+} from "./monitoring/autoRemediation";
+import {
+  evaluateZoneSensor,
+  formatControlActionType,
+  reconcileControlActions,
+} from "./monitoring/controlActions";
 import type {
   AlertLevel,
+  AutomatedControlResponse,
   BackendAgentAnalysis,
   BackendCropZone,
   BackendEventLogEntry,
@@ -18,6 +30,9 @@ import type {
   BackendPlannerOutput,
   BackendScenarioCatalogItem,
   BackendScenarioSeverity,
+  ControlActionItem,
+  ControlAlert,
+  ControlLogEntry,
   HeaderModel,
   StatusTone,
   TabDefinition,
@@ -43,10 +58,17 @@ interface AppState {
   scenarios: BackendScenarioCatalogItem[];
   planner: BackendPlannerOutput | null;
   agent: BackendAgentAnalysis | null;
+  controlActions: ControlActionItem[];
+  automationResponses: AutomatedControlResponse[];
+  controlLog: ControlLogEntry[];
+  controlAlert: ControlAlert | null;
+  activeControlIssueRanks: Record<string, number>;
+  automationInFlight: Record<string, string>;
   booting: boolean;
   busy: boolean;
   syncMessage: string;
   error: string;
+  pollIntervalMs: number;
 }
 
 interface MetricTileData {
@@ -88,6 +110,11 @@ interface SensorReadingData {
   tone: StatusTone;
 }
 
+interface CombinedLogItem {
+  timestamp: string;
+  rendered: string;
+}
+
 interface MicronutrientMiniData {
   id: string;
   label: string;
@@ -106,6 +133,17 @@ const tabs: Array<{ id: TabId; label: string }> = [
   { id: "agent", label: "VI. Companion" },
 ];
 
+const DEFAULT_POLL_INTERVAL_MS = 60_000;
+const DEFAULT_CONTROL_APPLY_DELAY_MS = 1_400;
+const MISSION_POLL_INTERVAL_MS = Math.max(
+  5_000,
+  Number(import.meta.env.VITE_MISSION_POLL_MS ?? DEFAULT_POLL_INTERVAL_MS),
+);
+const CONTROL_APPLY_DELAY_MS = Math.max(
+  400,
+  Number(import.meta.env.VITE_CONTROL_APPLY_DELAY_MS ?? DEFAULT_CONTROL_APPLY_DELAY_MS),
+);
+
 export function renderApp(root: HTMLDivElement): void {
   const state: AppState = {
     activeTab: "overview",
@@ -115,11 +153,19 @@ export function renderApp(root: HTMLDivElement): void {
     scenarios: [],
     planner: null,
     agent: null,
+    controlActions: [],
+    automationResponses: [],
+    controlLog: [],
+    controlAlert: null,
+    activeControlIssueRanks: {},
+    automationInFlight: {},
     booting: true,
     busy: false,
     syncMessage: "Connecting to live mission state.",
     error: "",
+    pollIntervalMs: MISSION_POLL_INTERVAL_MS,
   };
+  let pollTimer: number | null = null;
 
   const draw = () => {
     const headerModel = createHeaderModel(state.mission, state.planner, state.agent);
@@ -142,6 +188,7 @@ export function renderApp(root: HTMLDivElement): void {
                 </main>
               `
           }
+          ${renderAutomationRail(state.automationResponses)}
         </div>
       </div>
     `;
@@ -201,10 +248,180 @@ export function renderApp(root: HTMLDivElement): void {
 
     if (plannerRefresh) {
       void refreshPlanner("Refreshing planner analysis.");
+      return;
     }
   });
 
   void bootstrap();
+  startPolling();
+
+  function applyMissionMonitoring(
+    mission: BackendMissionState,
+    emitControlEvents: boolean,
+  ): boolean {
+    const detection = reconcileControlActions(
+      mission,
+      state.activeControlIssueRanks,
+      new Date().toISOString(),
+    );
+
+    state.controlActions = detection.activeActions;
+    state.activeControlIssueRanks = detection.activeIssueRanks;
+
+    if (emitControlEvents && detection.newLogEntries.length > 0) {
+      state.controlLog = [...detection.newLogEntries, ...state.controlLog].slice(0, 18);
+      if (!state.controlAlert || state.controlAlert.kind !== "automation") {
+        state.controlAlert = detection.latestAlert;
+      }
+    } else if (state.controlActions.length === 0 && activeAutomationResponses(state.automationResponses).length === 0) {
+      state.controlAlert = null;
+    } else if (
+      (!state.controlAlert || state.controlAlert.kind !== "automation") &&
+      detection.latestAlert
+    ) {
+      state.controlAlert = detection.latestAlert;
+    }
+
+    if (emitControlEvents && detection.newLogEntries.length > 0) {
+      void queueAutoRemediation(mission, detection);
+    }
+
+    return detection.shouldRefreshPlanner;
+  }
+
+  async function queueAutoRemediation(
+    mission: BackendMissionState,
+    detection: ReturnType<typeof reconcileControlActions>,
+  ): Promise<void> {
+    const triggeredKeys = [...new Set(detection.newLogEntries.map((entry) => entry.abnormalityKey))];
+
+    for (const abnormalityKey of triggeredKeys) {
+      if (state.automationInFlight[abnormalityKey]) {
+        continue;
+      }
+
+      const actions = detection.activeActions.filter((action) => action.abnormalityKey === abnormalityKey);
+      const plan = createAutoRemediationPlan(mission, actions, new Date().toISOString());
+
+      if (!plan) {
+        continue;
+      }
+
+      state.automationInFlight[abnormalityKey] = plan.responseId;
+      void executeAutoRemediation(plan);
+    }
+  }
+
+  async function executeAutoRemediation(plan: AutoRemediationPlan): Promise<void> {
+    const startedAt = new Date().toISOString();
+    const detectedResponse = createAutomatedResponse(plan, "detected", startedAt);
+    upsertAutomationResponse(detectedResponse);
+    pushAutomationLog(detectedResponse);
+    state.controlAlert = createAutomationAlert(detectedResponse);
+    draw();
+
+    await wait(CONTROL_APPLY_DELAY_MS);
+
+    const executingAt = new Date().toISOString();
+    const executingResponse = {
+      ...detectedResponse,
+      phase: "executing" as const,
+      statusLabel: plan.machineryLabel,
+      message: plan.executingMessage,
+      updatedAt: executingAt,
+    };
+    upsertAutomationResponse(executingResponse);
+    pushAutomationLog(executingResponse);
+    state.controlAlert = createAutomationAlert(executingResponse);
+    draw();
+
+    if (!plan.tweakRequest) {
+      finalizeAutomation(plan, executingResponse, "attention");
+      return;
+    }
+
+    try {
+      const mission = await tweakSimulation(plan.tweakRequest);
+      state.mission = mission;
+      const shouldRefreshPlanner = applyMissionMonitoring(mission, false);
+      syncSelections(state);
+
+      if (shouldRefreshPlanner) {
+        await refreshDecisionSupportSilently();
+      }
+
+      const phase = state.activeControlIssueRanks[plan.abnormalityKey] ? "attention" : "resolved";
+      finalizeAutomation(plan, executingResponse, phase);
+      state.error = "";
+    } catch (error) {
+      finalizeAutomation(plan, executingResponse, "attention", getErrorMessage(error));
+      state.error = getErrorMessage(error);
+    }
+  }
+
+  function finalizeAutomation(
+    plan: AutoRemediationPlan,
+    baseResponse: AutomatedControlResponse,
+    phase: "resolved" | "attention",
+    detail?: string,
+  ): void {
+    const updatedAt = new Date().toISOString();
+    const finalResponse: AutomatedControlResponse = {
+      ...baseResponse,
+      phase,
+      statusLabel: phase === "resolved" ? "Abstract response completed" : "Manual attention required",
+      message:
+        phase === "resolved"
+          ? plan.resolvedMessage
+          : `${plan.attentionMessage}${detail ? ` ${detail}` : ""}`,
+      updatedAt,
+    };
+    upsertAutomationResponse(finalResponse);
+    pushAutomationLog(finalResponse);
+    state.controlAlert = createAutomationAlert(finalResponse);
+    delete state.automationInFlight[plan.abnormalityKey];
+    draw();
+  }
+
+  function upsertAutomationResponse(response: AutomatedControlResponse): void {
+    state.automationResponses = [
+      response,
+      ...state.automationResponses.filter((item) => item.id !== response.id),
+    ].slice(0, 12);
+  }
+
+  function pushAutomationLog(response: AutomatedControlResponse): void {
+    const logEntry: ControlLogEntry = {
+      id: `${response.id}:${response.phase}`,
+      abnormalityKey: response.abnormalityKey,
+      kind: "automation",
+      timestamp: response.updatedAt,
+      priority: response.priority,
+      headline: response.headline,
+      message: response.message,
+      targetLabel: response.targetLabel,
+      targetZoneId: response.targetZoneId,
+      actionLabels: [response.statusLabel, ...response.actionTypes.map(formatControlActionType)],
+      relatedSensors: [],
+      recommendedSection: response.recommendedSection,
+      autoTriggered: response.autoTriggered,
+    };
+
+    state.controlLog = [
+      logEntry,
+      ...state.controlLog,
+    ].slice(0, 18);
+  }
+
+  function startPolling(): void {
+    if (pollTimer !== null) {
+      window.clearInterval(pollTimer);
+    }
+
+    pollTimer = window.setInterval(() => {
+      void pollMissionState();
+    }, state.pollIntervalMs);
+  }
 
   async function bootstrap(): Promise<void> {
     state.booting = true;
@@ -226,6 +443,7 @@ export function renderApp(root: HTMLDivElement): void {
       }
 
       state.mission = missionResult.value;
+      applyMissionMonitoring(state.mission, true);
       state.scenarios = scenariosResult.status === "fulfilled" ? scenariosResult.value : [];
       state.planner = plannerResult.status === "fulfilled" ? plannerResult.value : null;
       state.agent = agentResult.status === "fulfilled" ? agentResult.value : null;
@@ -264,6 +482,47 @@ export function renderApp(root: HTMLDivElement): void {
     }
   }
 
+  async function refreshDecisionSupportSilently(): Promise<void> {
+    try {
+      const [plannerResult, agentResult] = await Promise.allSettled([
+        fetchPlannerAnalysis(),
+        fetchAgentAnalysis(),
+      ]);
+
+      if (plannerResult.status === "fulfilled") {
+        state.planner = plannerResult.value;
+      }
+
+      if (agentResult.status === "fulfilled") {
+        state.agent = agentResult.value;
+      }
+    } catch {
+      // Keep the previous decision support snapshot during background polls.
+    }
+  }
+
+  async function pollMissionState(): Promise<void> {
+    if (state.busy) {
+      return;
+    }
+
+    try {
+      const mission = await fetchMissionState();
+      state.mission = mission;
+      const shouldRefreshPlanner = applyMissionMonitoring(mission, true);
+      syncSelections(state);
+      state.error = "";
+
+      if (shouldRefreshPlanner) {
+        await refreshDecisionSupportSilently();
+      }
+    } catch (error) {
+      state.error = getErrorMessage(error);
+    } finally {
+      draw();
+    }
+  }
+
   async function runScenarioInject(
     scenarioType: BackendScenarioCatalogItem["scenarioType"],
     severity: BackendScenarioSeverity,
@@ -274,6 +533,7 @@ export function renderApp(root: HTMLDivElement): void {
 
     try {
       state.mission = await injectScenario({ scenarioType, severity });
+      applyMissionMonitoring(state.mission, true);
       state.selectedScenarioType = scenarioType;
       syncSelections(state);
 
@@ -306,6 +566,7 @@ export function renderApp(root: HTMLDivElement): void {
 
     try {
       state.mission = await resetSimulation();
+      applyMissionMonitoring(state.mission, true);
       syncSelections(state);
 
       try {
@@ -336,29 +597,33 @@ function renderPage(state: AppState): string {
     return renderBootState();
   }
 
+  const controlBanner = state.controlAlert ? renderControlAlert(state.controlAlert) : "";
+
   switch (state.activeTab) {
     case "overview":
-      return renderOverview(state.mission, state.planner, state.selectedZoneId);
+      return `${controlBanner}${renderOverview(state)}`;
     case "crops":
-      return renderCrops(state.mission, state.selectedZoneId);
+      return `${controlBanner}${renderCrops(state.mission, state.selectedZoneId)}`;
     case "resources":
-      return renderResources(state.mission, state.planner);
+      return `${controlBanner}${renderResources(state.mission, state.planner)}`;
     case "nutrition":
-      return renderNutrition(state.mission, state.planner);
+      return `${controlBanner}${renderNutrition(state.mission, state.planner)}`;
     case "risk":
-      return renderRisk(state.mission, state.scenarios, state.selectedScenarioType);
+      return `${controlBanner}${renderRisk(state)}`;
     case "agent":
-      return renderAgent(state.mission, state.planner, state.agent);
+      return `${controlBanner}${renderAgent(state)}`;
     default:
-      return renderOverview(state.mission, state.planner, state.selectedZoneId);
+      return `${controlBanner}${renderOverview(state)}`;
   }
 }
 
-function renderOverview(
-  mission: BackendMissionState,
-  planner: BackendPlannerOutput | null,
-  selectedZoneId: string,
-): string {
+function renderOverview(state: AppState): string {
+  const { mission, planner, selectedZoneId, controlActions, automationResponses, pollIntervalMs } = state;
+
+  if (!mission) {
+    return renderBootState();
+  }
+
   const metrics = buildOverviewMetrics(mission);
 
   return `
@@ -399,11 +664,11 @@ function renderOverview(
                   )}
                 </div>
               </div>
-              <div class="overview-zone-grid">
+                <div class="overview-zone-grid">
                 ${mission.zones
                   .map((zone) => renderZoneOperationsCard(zone, zone.zoneId === selectedZoneId))
                   .join("")}
-              </div>
+                </div>
             </div>
           `,
         })}
@@ -454,9 +719,19 @@ function renderOverview(
           })}
 
           ${renderPanel({
+            title: "Automated Responses",
+            dotColor: "var(--aero-blue)",
+            rightSlot: renderStatusBadge(
+              `${activeAutomationResponses(automationResponses).length} active · ${controlActions.length} recommended`,
+              controlActionTone(controlActions, automationResponses),
+            ),
+            children: renderControlActionsPanel(controlActions, automationResponses, pollIntervalMs),
+          })}
+
+          ${renderPanel({
             title: "Incident / Planner",
             dotColor: "var(--cau)",
-            children: renderIncidentPanel(mission, planner),
+            children: renderIncidentPanel(mission, planner, controlActions, automationResponses),
           })}
         </div>
       </div>
@@ -469,7 +744,10 @@ function renderOverview(
             '<button class="overview-link-btn" type="button" data-tab-target="agent">Open agent -></button>',
           children: `
             <div class="ui-log-list">
-              ${mission.eventLog.slice(0, 4).map((entry) => renderMissionLogEntry(entry)).join("")}
+              ${buildCombinedLogItems(mission, state.controlLog)
+                .slice(0, 6)
+                .map((item) => item.rendered)
+                .join("")}
             </div>
           `,
         })}
@@ -850,11 +1128,13 @@ function renderNutrition(mission: BackendMissionState, planner: BackendPlannerOu
   `;
 }
 
-function renderRisk(
-  mission: BackendMissionState,
-  scenarios: BackendScenarioCatalogItem[],
-  selectedScenarioType: AppState["selectedScenarioType"],
-): string {
+function renderRisk(state: AppState): string {
+  const { mission, scenarios, selectedScenarioType, controlLog, controlActions, automationResponses } = state;
+
+  if (!mission) {
+    return renderBootState();
+  }
+
   const selectedScenario =
     scenarios.find((item) => item.scenarioType === selectedScenarioType) ??
     scenarios.find((item) => item.scenarioType === mission.activeScenario?.type) ??
@@ -877,7 +1157,10 @@ function renderRisk(
             : renderStatusBadge("No active scenario", "NOM"),
           children: `
             <div class="risk-emergency-list">
-              ${mission.eventLog.slice(0, 8).map((entry) => renderMissionLogEntry(entry)).join("")}
+              ${buildCombinedLogItems(mission, controlLog)
+                .slice(0, 8)
+                .map((item) => item.rendered)
+                .join("")}
             </div>
           `,
         })}
@@ -900,6 +1183,13 @@ function renderRisk(
                 )
                 .join("")}
             </div>
+            ${controlActions.length > 0
+              ? renderNotice({
+                  level: noticeFromTone(controlActionTone(controlActions, automationResponses)),
+                  title: "Abstract control monitor",
+                  children: `${controlActions.length} recommendation${controlActions.length === 1 ? "" : "s"} detected. ${activeAutomationResponses(automationResponses).length} automated response${activeAutomationResponses(automationResponses).length === 1 ? "" : "s"} currently running.`,
+                })
+              : ""}
           `,
         })}
       </div>
@@ -924,11 +1214,13 @@ function renderRisk(
   `;
 }
 
-function renderAgent(
-  mission: BackendMissionState,
-  planner: BackendPlannerOutput | null,
-  agent: BackendAgentAnalysis | null,
-): string {
+function renderAgent(state: AppState): string {
+  const { mission, planner, agent, controlActions, automationResponses, controlLog, pollIntervalMs } = state;
+
+  if (!mission) {
+    return renderBootState();
+  }
+
   return `
     <section class="agent-tab">
       <div class="agent-hub">
@@ -985,6 +1277,21 @@ function renderAgent(
                   <button class="agent-uplink__send" type="button" disabled>
                     <span class="agent-uplink__send-label">Transmit</span>
                   </button>
+                </div>
+              </div>
+
+              <div class="agent-signal-block">
+                <p class="agent-signal-block__title">Autonomous Monitor</p>
+                ${renderControlActionsPanel(controlActions, automationResponses, pollIntervalMs, 4)}
+              </div>
+
+              <div class="agent-signal-block">
+                <p class="agent-signal-block__title">Combined Activity Log</p>
+                <div class="agent-log-scroll">
+                  ${buildCombinedLogItems(mission, controlLog)
+                    .slice(0, 8)
+                    .map((item) => item.rendered)
+                    .join("")}
                 </div>
               </div>
             </div>
@@ -1055,6 +1362,212 @@ function renderRiskAlert(mission: BackendMissionState): string {
     level: "nom",
     label: "No Active Scenario",
     children: "Risk tab is now driven by the scenario registry and live mission log only.",
+  });
+}
+
+function renderControlAlert(alert: ControlAlert): string {
+  return renderAlertStrip({
+    level: alert.level,
+    label: alert.kind === "automation" ? "Auto Response" : "Sensor Alert",
+    children: `${alert.title} — ${alert.message}`,
+  });
+}
+
+function renderControlActionsPanel(
+  actions: ControlActionItem[],
+  automationResponses: AutomatedControlResponse[],
+  pollIntervalMs: number,
+  limit = 3,
+): string {
+  const activeResponses = activeAutomationResponses(automationResponses);
+  const activeResponseKeys = new Set(activeResponses.map((response) => response.abnormalityKey));
+  const recommendedActions = actions.filter((action) => !activeResponseKeys.has(action.abnormalityKey));
+
+  if (recommendedActions.length === 0 && automationResponses.length === 0) {
+    return renderNotice({
+      level: "ok",
+      title: "Monitor stable",
+      children: `Frontend mission polling is active every ${formatPollInterval(pollIntervalMs)}. No new abstract control recommendation is currently armed.`,
+    });
+  }
+
+  return `
+    <div class="control-action-stack">
+      ${
+        automationResponses.length > 0
+          ? `
+              <div class="control-action-list">
+                ${automationResponses
+                  .slice(0, limit)
+                  .map((response) => renderAutomationResponseCard(response))
+                  .join("")}
+              </div>
+            `
+          : ""
+      }
+
+      <div class="control-action-list">
+      ${recommendedActions
+        .slice(0, limit)
+        .map(
+          (action) => `
+            <article class="control-action-card control-action-card--${action.priority}">
+              <div class="control-action-card__head">
+                <div>
+                  <p class="control-action-card__label">${escapeHtml(action.label)}</p>
+                  <p class="control-action-card__target mono">${escapeHtml(action.targetLabel)}</p>
+                </div>
+                <div class="control-action-card__badges">
+                  ${renderStatusBadge("recommended", controlPriorityTone(action.priority))}
+                  ${renderStatusBadge(action.recommendedSection, "NOM")}
+                </div>
+              </div>
+              <p class="control-action-card__summary">${escapeHtml(action.summary)}</p>
+              <div class="control-action-card__meta">
+                <span class="mono">${escapeHtml(action.triggerReason)}</span>
+                <span class="mono">${action.relatedSensors.join(" · ")}</span>
+              </div>
+              ${renderNotice({
+                level: noticeFromTone(controlPriorityTone(action.priority)),
+                title: "Auto response queued",
+                children: `${action.label} will be staged automatically on the next detected poll transition.`,
+              })}
+            </article>
+          `,
+        )
+        .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function buildCombinedLogItems(
+  mission: BackendMissionState,
+  controlLog: ControlLogEntry[],
+): CombinedLogItem[] {
+  return [
+    ...mission.eventLog.map((entry) => ({
+      timestamp: entry.timestamp,
+      rendered: renderMissionLogEntry(entry),
+    })),
+    ...controlLog.map((entry) => ({
+      timestamp: entry.timestamp,
+      rendered: renderControlLogEntry(entry),
+    })),
+  ].sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+}
+
+function renderControlLogEntry(entry: ControlLogEntry): string {
+  return renderLogEntry({
+    type: logTypeFromControlPriority(entry.priority),
+    icon: entry.kind === "automation" ? "AUTO" : entry.autoTriggered ? "AUTO" : "ADV",
+    message: entry.message,
+    meta: `${formatTimestamp(entry.timestamp)} | ${entry.targetLabel}`,
+    confidence: entry.actionLabels.join(" / ").toUpperCase(),
+    extra: renderStatusBadge(entry.recommendedSection, controlPriorityTone(entry.priority)),
+  });
+}
+
+function renderAutomationResponseCard(response: AutomatedControlResponse): string {
+  return `
+    <article class="control-action-card control-action-card--${response.priority}">
+      <div class="control-action-card__head">
+        <div>
+          <p class="control-action-card__label">${escapeHtml(response.statusLabel)}</p>
+          <p class="control-action-card__target mono">${escapeHtml(response.targetLabel)}</p>
+        </div>
+        <div class="control-action-card__badges">
+          ${renderStatusBadge(response.autoTriggered ? "auto" : "advisory", controlPriorityTone(response.priority))}
+          ${renderStatusBadge(formatAutomationPhase(response.phase), response.phase === "resolved" ? "NOM" : response.phase === "attention" ? "ABT" : "CAU")}
+        </div>
+      </div>
+      ${
+        response.phase === "executing"
+          ? `<div class="control-action-card__loader"><span></span></div>`
+          : ""
+      }
+      <p class="control-action-card__summary">${escapeHtml(response.message)}</p>
+      <div class="control-action-card__meta">
+        <span class="mono">${escapeHtml(response.machineryLabel)}</span>
+        <span class="mono">${formatTimestamp(response.updatedAt)}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderAutomationRail(responses: AutomatedControlResponse[]): string {
+  const visibleResponses = responses.slice(0, 4);
+
+  if (visibleResponses.length === 0) {
+    return "";
+  }
+
+  return `
+    <aside class="automation-rail">
+      ${visibleResponses
+        .map(
+          (response) => `
+            <article class="automation-rail__card automation-rail__card--${response.priority}">
+              <div class="automation-rail__head">
+                <div>
+                  <p class="automation-rail__label">${escapeHtml(response.statusLabel)}</p>
+                  <p class="automation-rail__target mono">${escapeHtml(response.targetLabel)}</p>
+                </div>
+                ${renderStatusBadge(formatAutomationPhase(response.phase), response.phase === "resolved" ? "NOM" : response.phase === "attention" ? "ABT" : "CAU")}
+              </div>
+              <p class="automation-rail__message">${escapeHtml(response.message)}</p>
+              <p class="automation-rail__machinery mono">${escapeHtml(response.machineryLabel)}</p>
+              ${
+                response.phase === "executing"
+                  ? `<div class="automation-rail__loader"><span></span></div>`
+                  : ""
+              }
+            </article>
+          `,
+        )
+        .join("")}
+    </aside>
+  `;
+}
+
+function createAutomationAlert(response: AutomatedControlResponse): ControlAlert {
+  return {
+    id: `${response.id}:alert:${response.phase}`,
+    abnormalityKey: response.abnormalityKey,
+    kind: "automation",
+    level: alertFromTone(controlPriorityTone(response.priority)),
+    title: response.statusLabel,
+    message: response.message,
+    actionLabels: response.actionTypes.map(formatControlActionType),
+    targetLabel: response.targetLabel,
+    timestamp: response.updatedAt,
+  };
+}
+
+function activeAutomationResponses(
+  responses: AutomatedControlResponse[],
+): AutomatedControlResponse[] {
+  return responses.filter((response) => response.phase === "detected" || response.phase === "executing");
+}
+
+function formatAutomationPhase(phase: AutomatedControlResponse["phase"]): string {
+  switch (phase) {
+    case "detected":
+      return "Detected";
+    case "executing":
+      return "Executing";
+    case "resolved":
+      return "Resolved";
+    case "attention":
+      return "Attention";
+    default:
+      return "Monitor";
+  }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
   });
 }
 
@@ -1887,122 +2400,37 @@ function buildRiskGauges(mission: BackendMissionState) {
   ];
 }
 
-type SensorThreshold = {
-  low: number;
-  high: number;
-  criticalLow: number;
-  criticalHigh: number;
-};
-
-const SENSOR_THRESHOLDS: Record<
-  BackendCropZone["cropType"],
-  {
-    temperature: SensorThreshold;
-    humidity: SensorThreshold;
-    lightPAR: SensorThreshold;
-    soilMoisture: SensorThreshold;
-    nutrientPH: SensorThreshold;
-    electricalConductivity: SensorThreshold;
-    co2Ppm: SensorThreshold;
-  }
-> = {
-  lettuce: {
-    temperature: { low: 18, high: 24, criticalLow: 14, criticalHigh: 30 },
-    humidity: { low: 50, high: 70, criticalLow: 35, criticalHigh: 85 },
-    lightPAR: { low: 180, high: 280, criticalLow: 140, criticalHigh: 360 },
-    soilMoisture: { low: 65, high: 80, criticalLow: 40, criticalHigh: 92 },
-    nutrientPH: { low: 5.8, high: 6.4, criticalLow: 5.2, criticalHigh: 7 },
-    electricalConductivity: { low: 1.4, high: 2.2, criticalLow: 0.8, criticalHigh: 3 },
-    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
-  },
-  potato: {
-    temperature: { low: 17, high: 22, criticalLow: 12, criticalHigh: 29 },
-    humidity: { low: 55, high: 75, criticalLow: 35, criticalHigh: 88 },
-    lightPAR: { low: 250, high: 380, criticalLow: 180, criticalHigh: 460 },
-    soilMoisture: { low: 60, high: 82, criticalLow: 35, criticalHigh: 95 },
-    nutrientPH: { low: 5.5, high: 6.2, criticalLow: 5, criticalHigh: 6.8 },
-    electricalConductivity: { low: 1.6, high: 2.4, criticalLow: 1, criticalHigh: 3.3 },
-    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
-  },
-  beans: {
-    temperature: { low: 20, high: 26, criticalLow: 14, criticalHigh: 33 },
-    humidity: { low: 50, high: 72, criticalLow: 35, criticalHigh: 88 },
-    lightPAR: { low: 210, high: 320, criticalLow: 160, criticalHigh: 420 },
-    soilMoisture: { low: 58, high: 78, criticalLow: 35, criticalHigh: 90 },
-    nutrientPH: { low: 5.9, high: 6.5, criticalLow: 5.3, criticalHigh: 7.1 },
-    electricalConductivity: { low: 1.5, high: 2.3, criticalLow: 1, criticalHigh: 3.2 },
-    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
-  },
-  radish: {
-    temperature: { low: 18, high: 24, criticalLow: 14, criticalHigh: 31 },
-    humidity: { low: 48, high: 72, criticalLow: 35, criticalHigh: 88 },
-    lightPAR: { low: 150, high: 240, criticalLow: 110, criticalHigh: 320 },
-    soilMoisture: { low: 55, high: 76, criticalLow: 30, criticalHigh: 90 },
-    nutrientPH: { low: 5.7, high: 6.3, criticalLow: 5.1, criticalHigh: 6.9 },
-    electricalConductivity: { low: 1.3, high: 2.1, criticalLow: 0.8, criticalHigh: 2.9 },
-    co2Ppm: { low: 700, high: 1100, criticalLow: 450, criticalHigh: 1600 },
-  },
-};
-
-function evaluateSensorThreshold(
-  value: number,
-  threshold: SensorThreshold,
-): { tone: StatusTone; state: string } {
-  if (value <= threshold.criticalLow) {
-    return { tone: "ABT", state: "critical low" };
-  }
-
-  if (value >= threshold.criticalHigh) {
-    return { tone: "ABT", state: "critical high" };
-  }
-
-  if (value < threshold.low) {
-    return { tone: "CAU", state: "low" };
-  }
-
-  if (value > threshold.high) {
-    return { tone: "CAU", state: "high" };
-  }
-
-  return { tone: "NOM", state: "nominal" };
-}
-
 function buildSensorReadings(zone: BackendCropZone): SensorReadingData[] {
-  const thresholds = SENSOR_THRESHOLDS[zone.cropType];
-
   return [
     {
       label: "Temp",
       value: `${zone.sensors.temperature} C`,
-      ...evaluateSensorThreshold(zone.sensors.temperature, thresholds.temperature),
+      ...evaluateZoneSensor(zone, "temperature"),
     },
     {
       label: "Humidity",
       value: `${zone.sensors.humidity}%`,
-      ...evaluateSensorThreshold(zone.sensors.humidity, thresholds.humidity),
+      ...evaluateZoneSensor(zone, "humidity"),
     },
     {
       label: "PAR",
       value: `${zone.sensors.lightPAR}`,
-      ...evaluateSensorThreshold(zone.sensors.lightPAR, thresholds.lightPAR),
+      ...evaluateZoneSensor(zone, "lightPAR"),
     },
     {
       label: "Moisture",
       value: `${zone.sensors.soilMoisture}%`,
-      ...evaluateSensorThreshold(zone.sensors.soilMoisture, thresholds.soilMoisture),
+      ...evaluateZoneSensor(zone, "soilMoisture"),
     },
     {
       label: "pH",
       value: `${zone.sensors.nutrientPH}`,
-      ...evaluateSensorThreshold(zone.sensors.nutrientPH, thresholds.nutrientPH),
+      ...evaluateZoneSensor(zone, "nutrientPH"),
     },
     {
       label: "EC",
       value: `${zone.sensors.electricalConductivity} mS`,
-      ...evaluateSensorThreshold(
-        zone.sensors.electricalConductivity,
-        thresholds.electricalConductivity,
-      ),
+      ...evaluateZoneSensor(zone, "electricalConductivity"),
     },
   ];
 }
@@ -2219,9 +2647,13 @@ function renderResourceTile(tile: OverviewResourceTileData): string {
 function renderIncidentPanel(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
+  controlActions: ControlActionItem[],
+  automationResponses: AutomatedControlResponse[],
 ): string {
   const primaryChange = planner?.changes[0];
   const primaryFlag = planner?.stressFlags[0];
+  const primaryAutomation = automationResponses[0];
+  const primaryAction = controlActions[0];
   const incidentLabel = mission.activeScenario
     ? `${mission.activeScenario.title} · ${formatScenarioSeverity(mission.activeScenario.severity)}`
     : "No active scenario";
@@ -2243,6 +2675,14 @@ function renderIncidentPanel(
         )}</span>
       </div>
       <div class="incident-panel__row">
+        <span class="incident-panel__label">Auto responses</span>
+        <span class="incident-panel__value mono">${activeAutomationResponses(automationResponses).length}</span>
+      </div>
+      <div class="incident-panel__row">
+        <span class="incident-panel__label">Recommendations</span>
+        <span class="incident-panel__value mono">${controlActions.length}</span>
+      </div>
+      <div class="incident-panel__row">
         <span class="incident-panel__label">Projected changes</span>
         <span class="incident-panel__value mono">${planner?.changes.length ?? 0}</span>
       </div>
@@ -2250,11 +2690,15 @@ function renderIncidentPanel(
         <span class="incident-panel__label">Primary watch</span>
         <span class="incident-panel__value incident-panel__value--wrap">
           ${
-            primaryFlag
-              ? `${escapeHtml(primaryFlag.zoneId)} ${escapeHtml(primaryFlag.stressType.replaceAll("_", " "))} (${escapeHtml(primaryFlag.severity)})`
-              : primaryChange
-                ? `${escapeHtml(primaryChange.field)} → ${escapeHtml(String(primaryChange.newValue))}`
-                : "No planner watch item raised."
+            primaryAutomation
+              ? escapeHtml(primaryAutomation.statusLabel)
+              : primaryAction
+                ? escapeHtml(primaryAction.label)
+              : primaryFlag
+                ? `${escapeHtml(primaryFlag.zoneId)} ${escapeHtml(primaryFlag.stressType.replaceAll("_", " "))} (${escapeHtml(primaryFlag.severity)})`
+                : primaryChange
+                  ? `${escapeHtml(primaryChange.field)} → ${escapeHtml(String(primaryChange.newValue))}`
+                  : "No planner watch item raised."
           }
         </span>
       </div>
@@ -2375,6 +2819,41 @@ function zoneTone(zone: BackendCropZone): StatusTone {
   return "NOM";
 }
 
+function controlPriorityTone(priority: ControlLogEntry["priority"]): StatusTone {
+  if (priority === "critical") {
+    return "ABT";
+  }
+
+  if (priority === "warning") {
+    return "CAU";
+  }
+
+  return "NOM";
+}
+
+function controlActionTone(
+  actions: ControlActionItem[],
+  automationResponses: AutomatedControlResponse[] = [],
+): StatusTone {
+  const activeResponses = activeAutomationResponses(automationResponses);
+
+  if (
+    actions.some((action) => action.priority === "critical") ||
+    activeResponses.some((response) => response.priority === "critical")
+  ) {
+    return "ABT";
+  }
+
+  if (
+    actions.some((action) => action.priority === "warning") ||
+    activeResponses.some((response) => response.priority === "warning")
+  ) {
+    return "CAU";
+  }
+
+  return "NOM";
+}
+
 function eventTone(level: BackendEventLogEntry["level"]): StatusTone {
   if (level === "critical") {
     return "ABT";
@@ -2455,6 +2934,18 @@ function logTypeFromEvent(entry: BackendEventLogEntry): "act" | "wrn" | "alr" | 
   }
 
   return "inf";
+}
+
+function logTypeFromControlPriority(priority: ControlLogEntry["priority"]): "act" | "wrn" | "alr" | "inf" {
+  if (priority === "critical") {
+    return "alr";
+  }
+
+  if (priority === "warning") {
+    return "wrn";
+  }
+
+  return "act";
 }
 
 function eventIcon(entry: BackendEventLogEntry): string {
@@ -2582,6 +3073,14 @@ function formatTimestamp(value: string): string {
   }
 
   return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}Z`;
+}
+
+function formatPollInterval(value: number): string {
+  if (value % 60_000 === 0) {
+    return `${Math.round(value / 60_000)} min`;
+  }
+
+  return `${Math.round(value / 1_000)} sec`;
 }
 
 function toneColor(tone: StatusTone): string {
