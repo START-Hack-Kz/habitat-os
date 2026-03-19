@@ -6,7 +6,6 @@ import {
   setMissionState,
 } from "./mission.store";
 import {
-  buildMissionSnapshot,
   getCurrentMissionSnapshot,
 } from "./mission.service";
 import type { MissionState, MissionStatus } from "./mission.types";
