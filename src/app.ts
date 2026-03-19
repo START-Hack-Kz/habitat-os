@@ -1,5 +1,6 @@
 import {
   agentMetrics,
+  chatReplies,
   confidenceRows,
   crops,
   cropDependencies,
@@ -75,12 +76,18 @@ import {
 } from "./ui/primitives";
 
 export function renderApp(root: HTMLDivElement): void {
+  type ChatMessage = { id: string; role: "bot" | "user"; text: string };
+
   let activeTab: TabId = "overview";
   let overviewAlertDismissed = false;
   let selectedCropId = crops.find((crop) => crop.healthLevel !== "NOM")?.id ?? crops[0]?.id ?? "";
   let selectedScenarioId = scenarioSimulations[0]?.id ?? "";
   let expandedEmergencyId = emergencyLog[0]?.id ?? "";
   let selectedTradeoffOptionId = tradeoffDecisions[0]?.options[0]?.id ?? "";
+  let chatOpen = false;
+  let chatDraft = "";
+  let chatReplyIndex = 0;
+  let chatMessages = createInitialChatMessages();
 
   const renderPage = (): string => {
     switch (activeTab) {
@@ -155,6 +162,8 @@ export function renderApp(root: HTMLDivElement): void {
             ${renderPage()}
           </main>
         </div>
+
+        ${renderChatDrawer(chatOpen, chatMessages, chatDraft)}
       </div>
     `;
   };
@@ -171,6 +180,8 @@ export function renderApp(root: HTMLDivElement): void {
     const emergencyToggle = target.closest<HTMLElement>("[data-emergency-toggle]");
     const scenarioToggle = target.closest<HTMLElement>("[data-scenario-sim]");
     const tradeoffToggle = target.closest<HTMLElement>("[data-tradeoff-option]");
+    const chatToggle = target.closest<HTMLElement>("[data-chat-toggle]");
+    const chatSend = target.closest<HTMLElement>("[data-chat-send]");
 
     if (cropCard) {
       const nextCropId = cropCard.dataset.cropSelect;
@@ -208,6 +219,17 @@ export function renderApp(root: HTMLDivElement): void {
       return;
     }
 
+    if (chatToggle) {
+      chatOpen = !chatOpen;
+      draw();
+      return;
+    }
+
+    if (chatSend) {
+      sendChatMessage();
+      return;
+    }
+
     if (!button) {
       if (target.closest("[data-dismiss-overview-alert]")) {
         overviewAlertDismissed = true;
@@ -224,6 +246,95 @@ export function renderApp(root: HTMLDivElement): void {
       draw();
     }
   });
+
+  root.addEventListener("input", (event) => {
+    const target = event.target;
+
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    if (target.matches("[data-chat-input]")) {
+      chatDraft = target.value;
+    }
+  });
+
+  root.addEventListener("keydown", (event) => {
+    const target = event.target;
+
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    if (target.matches("[data-chat-input]") && event.key === "Enter") {
+      event.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  function sendChatMessage(): void {
+    const value = chatDraft.trim();
+
+    if (!value) {
+      return;
+    }
+
+    chatMessages = [
+      ...chatMessages,
+      {
+        id: `msg-user-${Date.now()}`,
+        role: "user",
+        text: value,
+      },
+    ];
+    chatDraft = "";
+    chatOpen = true;
+    draw();
+
+    const replies = getBotReplies();
+    const nextReply = replies[chatReplyIndex % replies.length];
+    chatReplyIndex += 1;
+
+    setTimeout(() => {
+      chatMessages = [
+        ...chatMessages,
+        {
+          id: `msg-bot-${Date.now()}`,
+          role: "bot",
+          text: nextReply,
+        },
+      ];
+      draw();
+    }, 700);
+  }
+
+  function getBotReplies(): string[] {
+    return chatReplies
+      .filter((item) => item.role !== "user")
+      .map((item) => item.text);
+  }
+
+  function createInitialChatMessages(): ChatMessage[] {
+    const radish = crops.find((item) => item.name.toLowerCase().includes("radish")) ?? crops[3];
+
+    return [
+      {
+        id: "chat-seed-1",
+        role: "bot",
+        text: chatReplies[0]?.text ?? "Mission context loaded.",
+      },
+      {
+        id: "chat-seed-2",
+        role: "user",
+        text: "Why is radish health at 41?",
+      },
+      {
+        id: "chat-seed-3",
+        role: "bot",
+        text: `${radish.name} is under ${radish.stressLabel} with ${radish.allocationPct}% allocation. Current health reads ${radish.healthScore}%, so the active scenario is suppressing recovery.`,
+      },
+    ];
+  }
 
   draw();
 }
@@ -1129,6 +1240,58 @@ function renderConfidenceRow(item: ConfidenceRow): string[] {
   ];
 }
 
+function renderChatDrawer(
+  isOpen: boolean,
+  messages: Array<{ id: string; role: "bot" | "user"; text: string }>,
+  draft: string,
+): string {
+  return `
+    <div class="chat-shell">
+      <button
+        type="button"
+        class="chat-fab"
+        data-chat-toggle="true"
+        aria-expanded="${String(isOpen)}"
+        aria-label="Toggle AETHER chat"
+      >
+        <span>✦</span>
+      </button>
+
+      <aside class="chat-drawer ${isOpen ? "is-open" : ""}">
+        <div class="chat-drawer__header">
+          <div>
+            <p class="chat-drawer__title mono">AETHER Query Interface</p>
+            <p class="chat-drawer__subtitle">Mission-linked query channel</p>
+          </div>
+        </div>
+
+        <div class="chat-drawer__messages">
+          ${messages.map((message) => renderChatMessage(message)).join("")}
+        </div>
+
+        <div class="chat-drawer__input-row">
+          <input
+            class="chat-drawer__input"
+            data-chat-input="true"
+            type="text"
+            value="${escapeHtml(draft)}"
+            placeholder="Ask the greenhouse..."
+          />
+          <button type="button" class="btn btn-primary chat-drawer__send" data-chat-send="true">--&gt;</button>
+        </div>
+      </aside>
+    </div>
+  `;
+}
+
+function renderChatMessage(message: { id: string; role: "bot" | "user"; text: string }): string {
+  return `
+    <div class="chat-message chat-message--${message.role}" data-chat-message-id="${message.id}">
+      ${escapeHtml(message.text)}
+    </div>
+  `;
+}
+
 function renderOverviewEnvTile(item: EnvParam): string {
   const valueClass = item.id === "co2" ? "overview-env-tile__value--cau" : "";
 
@@ -1290,8 +1453,17 @@ function getNoticeLevel(level: StatusTone): "ok" | "warn" | "crit" {
   }
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 void renderRiskLegacy;
 void renderEnvKpi;
 void renderCropCard;
 void renderTradeoff;
+void renderChatLine;
 void renderChatLine;
