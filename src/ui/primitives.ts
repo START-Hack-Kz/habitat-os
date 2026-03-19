@@ -303,9 +303,9 @@ export function renderNutrientPieChart({
   return `
     <div class="ui-nutrient-chart" aria-hidden="true">
       <div class="ui-nutrient-chart__ring" style="background: conic-gradient(${gradient})">
-        <div class="ui-nutrient-chart__center">
-          <span class="ui-nutrient-chart__center-label">${centerLabel}</span>
-          <span class="ui-nutrient-chart__center-value mono">${centerValue}</span>
+        <div class="ui-nutrient-chart__center${centerLabel || centerValue ? "" : " ui-nutrient-chart__center--empty"}">
+          ${centerLabel ? `<span class="ui-nutrient-chart__center-label">${centerLabel}</span>` : ""}
+          ${centerValue ? `<span class="ui-nutrient-chart__center-value mono">${centerValue}</span>` : ""}
         </div>
       </div>
     </div>

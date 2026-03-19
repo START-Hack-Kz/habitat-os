@@ -1,14 +1,17 @@
 import { renderHeader } from "./components/header";
 import { renderNavigation } from "./components/navigation";
 import {
+  fetchAgentAnalysis,
   fetchMissionState,
   fetchPlannerAnalysis,
   fetchScenarioCatalog,
   injectScenario,
   resetSimulation,
 } from "./data/api";
+import { getZoneCompositionProfile } from "./data/zoneComposition";
 import type {
   AlertLevel,
+  BackendAgentAnalysis,
   BackendCropZone,
   BackendEventLogEntry,
   BackendMissionState,
@@ -27,6 +30,7 @@ import {
   renderKpiTile,
   renderLogEntry,
   renderNotice,
+  renderNutrientPieChart,
   renderPanel,
   renderStatusBadge,
 } from "./ui/primitives";
@@ -38,6 +42,7 @@ interface AppState {
   mission: BackendMissionState | null;
   scenarios: BackendScenarioCatalogItem[];
   planner: BackendPlannerOutput | null;
+  agent: BackendAgentAnalysis | null;
   booting: boolean;
   busy: boolean;
   syncMessage: string;
@@ -98,7 +103,7 @@ const tabs: Array<{ id: TabId; label: string }> = [
   { id: "resources", label: "III. Resources" },
   { id: "nutrition", label: "IV. Nutrition" },
   { id: "risk", label: "V. Risk & Scenarios" },
-  { id: "agent", label: "VI. AI Intelligence" },
+  { id: "agent", label: "VI. Companion" },
 ];
 
 export function renderApp(root: HTMLDivElement): void {
@@ -109,15 +114,16 @@ export function renderApp(root: HTMLDivElement): void {
     mission: null,
     scenarios: [],
     planner: null,
+    agent: null,
     booting: true,
     busy: false,
-    syncMessage: "Connecting to backend mission state.",
+    syncMessage: "Connecting to live mission state.",
     error: "",
   };
 
   const draw = () => {
-    const headerModel = createHeaderModel(state.mission, state.planner);
-    const navTabs = createNavigationTabs(state.mission, state.planner);
+    const headerModel = createHeaderModel(state.mission, state.planner, state.agent);
+    const navTabs = createNavigationTabs(state.mission, state.agent);
 
     root.innerHTML = `
       <div class="app-frame">
@@ -207,15 +213,16 @@ export function renderApp(root: HTMLDivElement): void {
   async function bootstrap(): Promise<void> {
     state.booting = true;
     state.busy = true;
-    state.syncMessage = "Loading mission, scenario catalog, and planner state.";
+    state.syncMessage = "Loading mission, scenario catalog, planner state, and decision support.";
     state.error = "";
     draw();
 
     try {
-      const [missionResult, scenariosResult, plannerResult] = await Promise.allSettled([
+      const [missionResult, scenariosResult, plannerResult, agentResult] = await Promise.allSettled([
         fetchMissionState(),
         fetchScenarioCatalog(),
         fetchPlannerAnalysis(),
+        fetchAgentAnalysis(),
       ]);
 
       if (missionResult.status !== "fulfilled") {
@@ -225,6 +232,7 @@ export function renderApp(root: HTMLDivElement): void {
       state.mission = missionResult.value;
       state.scenarios = scenariosResult.status === "fulfilled" ? scenariosResult.value : [];
       state.planner = plannerResult.status === "fulfilled" ? plannerResult.value : null;
+      state.agent = agentResult.status === "fulfilled" ? agentResult.value : null;
       syncSelections(state);
       state.error = "";
     } catch (error) {
@@ -243,7 +251,12 @@ export function renderApp(root: HTMLDivElement): void {
     draw();
 
     try {
-      state.planner = await fetchPlannerAnalysis();
+      const [plannerResult, agentResult] = await Promise.allSettled([
+        fetchPlannerAnalysis(),
+        fetchAgentAnalysis(),
+      ]);
+      state.planner = plannerResult.status === "fulfilled" ? plannerResult.value : null;
+      state.agent = agentResult.status === "fulfilled" ? agentResult.value : null;
       state.error = "";
     } catch (error) {
       state.planner = null;
@@ -274,6 +287,12 @@ export function renderApp(root: HTMLDivElement): void {
         state.planner = null;
       }
 
+      try {
+        state.agent = await fetchAgentAnalysis();
+      } catch {
+        state.agent = null;
+      }
+
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
@@ -297,6 +316,12 @@ export function renderApp(root: HTMLDivElement): void {
         state.planner = await fetchPlannerAnalysis();
       } catch {
         state.planner = null;
+      }
+
+      try {
+        state.agent = await fetchAgentAnalysis();
+      } catch {
+        state.agent = null;
       }
 
       state.error = "";
@@ -327,7 +352,7 @@ function renderPage(state: AppState): string {
     case "risk":
       return renderRisk(state.mission, state.scenarios, state.selectedScenarioType);
     case "agent":
-      return renderAgent(state.mission, state.planner);
+      return renderAgent(state.mission, state.planner, state.agent);
     default:
       return renderOverview(state.mission, state.planner, state.selectedZoneId);
   }
@@ -465,7 +490,7 @@ function renderOverview(
                 ? renderNotice({
                     level: "info",
                     title: "Planner mode",
-                    children: `Backend planner is currently operating in ${formatPlannerMode(planner.mode)} mode.`,
+                    children: `Mission planner is currently operating in ${formatPlannerMode(planner.mode)} mode.`,
                   })
                 : ""
             }
@@ -478,6 +503,7 @@ function renderOverview(
 
 function renderCrops(mission: BackendMissionState, selectedZoneId: string): string {
   const selectedZone = getSelectedZone(mission, selectedZoneId);
+  const compositionProfile = getZoneCompositionProfile(selectedZone.cropType);
 
   return `
     <section class="crop-tab">
@@ -523,6 +549,38 @@ function renderCrops(mission: BackendMissionState, selectedZoneId: string): stri
           })}
 
           ${renderPanel({
+            title: "Nutrient Composition",
+            dotColor: "var(--nom)",
+            rightSlot: renderStatusBadge(formatCropType(selectedZone.cropType), zoneTone(selectedZone)),
+            children: `
+              <div class="crop-nutrient-panel">
+                ${renderNutrientPieChart({
+                  slices: compositionProfile.slices,
+                  centerLabel: "",
+                  centerValue: "",
+                })}
+                <div class="crop-nutrient-panel__meta">
+                  <div class="crop-nutrient-legend">
+                    ${compositionProfile.slices
+                      .map(
+                        (slice) => `
+                          <div class="crop-nutrient-legend__item">
+                            <span class="crop-nutrient-legend__swatch" style="background:${slice.color}"></span>
+                            <span class="crop-nutrient-legend__label">${escapeHtml(slice.label)}</span>
+                            <span class="crop-nutrient-legend__value">${escapeHtml(slice.detail)}</span>
+                            <span class="crop-nutrient-legend__pct mono">${slice.value}%</span>
+                          </div>
+                        `,
+                      )
+                      .join("")}
+                  </div>
+                  <p class="crop-nutrient-note">${escapeHtml(compositionProfile.note)} for ${escapeHtml(selectedZone.name)}.</p>
+                </div>
+              </div>
+            `,
+          })}
+
+          ${renderPanel({
             title: "Selected Zone Telemetry",
             dotColor: "var(--nom)",
             children: `
@@ -538,7 +596,7 @@ function renderCrops(mission: BackendMissionState, selectedZoneId: string): stri
                 : renderNotice({
                     level: "ok",
                     title: "Zone state",
-                    children: "Backend mission state reports this zone as stable with no active stress flag.",
+                    children: "The live mission snapshot reports this zone as stable with no active stress flag.",
                   })}
             `,
           })}
@@ -626,13 +684,18 @@ function renderResources(mission: BackendMissionState, planner: BackendPlannerOu
           '<button class="btn btn-ghost" type="button" data-planner-refresh="true">Refresh analysis</button>',
         children: planner
           ? `
-              <div class="failure-realloc-grid">
-                <div class="failure-realloc-col">
-                  <p class="failure-realloc-col__title">Mode</p>
+              <div class="planner-response">
+                <div class="failure-realloc-grid">
+                <div class="failure-realloc-col planner-response__col planner-response__col--status">
+                  <p class="failure-realloc-col__title">Mission Readout</p>
                   <div class="failure-realloc-col__rows">
                     <div class="failure-realloc-row">
                       <span class="failure-realloc-row__label">Planner mode</span>
                       <span class="failure-realloc-row__value">${formatPlannerMode(planner.mode)}</span>
+                    </div>
+                    <div class="failure-realloc-row">
+                      <span class="failure-realloc-row__label">Nutrition risk</span>
+                      <span class="failure-realloc-row__value">${planner.nutritionRiskDetected ? "Detected" : "Not detected"}</span>
                     </div>
                     <div class="failure-realloc-row">
                       <span class="failure-realloc-row__label">Current scenario</span>
@@ -640,46 +703,72 @@ function renderResources(mission: BackendMissionState, planner: BackendPlannerOu
                     </div>
                   </div>
                   ${renderNotice({
-                    level: "warn",
-                    title: "Planner explanation",
+                    level: planner.nutritionRiskDetected ? "warn" : "info",
+                    title: "Deterministic assessment",
                     children: planner.explanation,
                   })}
                 </div>
 
-                <div class="failure-realloc-col">
-                  <p class="failure-realloc-col__title">Recommended Actions</p>
+                <div class="failure-realloc-col planner-response__col planner-response__col--changes">
+                  <p class="failure-realloc-col__title">Projected Changes</p>
                   <div class="failure-realloc-col__rows">
-                    ${planner.recommendedActions
-                      .map(
-                        (action) => `
+                    ${planner.changes.length > 0
+                      ? planner.changes
+                          .slice(0, 6)
+                          .map(
+                            (change) => `
+                              <div class="failure-realloc-row">
+                                <span class="failure-realloc-row__label">${escapeHtml(formatPlannerField(change.field))}</span>
+                                <span class="failure-realloc-row__value">
+                                  <span class="mono">${escapeHtml(formatPlannerValue(change.previousValue))}</span>
+                                  &nbsp;→&nbsp;
+                                  <span class="mono">${escapeHtml(formatPlannerValue(change.newValue))}</span>
+                                </span>
+                              </div>
+                            `,
+                          )
+                          .join("")
+                      : `
                           <div class="failure-realloc-row">
-                            <span class="failure-realloc-row__label">${formatPlannerActionType(action.type)}</span>
-                            <span class="failure-realloc-row__value">
-                              ${escapeHtml(action.description)}
-                              ${action.targetZoneId ? `<br><span class="mono">${escapeHtml(action.targetZoneId)}</span>` : ""}
-                            </span>
+                            <span class="failure-realloc-row__label">Projected state</span>
+                            <span class="failure-realloc-row__value">No deterministic state changes required.</span>
                           </div>
-                        `,
-                      )
-                      .join("")}
+                        `}
                   </div>
                 </div>
 
-                <div class="failure-realloc-col">
-                  <p class="failure-realloc-col__title">Nutrition Forecast</p>
+                <div class="failure-realloc-col planner-response__col planner-response__col--flags">
+                  <p class="failure-realloc-col__title">Stress Flags</p>
                   <div class="failure-realloc-col__rows">
-                    ${renderForecastRow("Calories", planner.nutritionForecast.before.caloricCoveragePercent, planner.nutritionForecast.after.caloricCoveragePercent)}
-                    ${renderForecastRow("Protein", planner.nutritionForecast.before.proteinCoveragePercent, planner.nutritionForecast.after.proteinCoveragePercent)}
-                    ${renderForecastRow("Micronutrients", planner.nutritionForecast.before.micronutrientAdequacyPercent, planner.nutritionForecast.after.micronutrientAdequacyPercent)}
-                    ${renderForecastRow("Coverage score", planner.nutritionForecast.before.nutritionalCoverageScore, planner.nutritionForecast.after.nutritionalCoverageScore)}
+                    ${planner.stressFlags.length > 0
+                      ? planner.stressFlags
+                          .slice(0, 6)
+                          .map(
+                            (flag) => `
+                              <div class="failure-realloc-row">
+                                <span class="failure-realloc-row__label">${escapeHtml(flag.zoneId)} · ${escapeHtml(flag.stressType.replaceAll("_", " "))}</span>
+                                <span class="failure-realloc-row__value">
+                                  ${escapeHtml(flag.severity)}<br><span class="mono">${escapeHtml(flag.rule)}</span>
+                                </span>
+                              </div>
+                            `,
+                          )
+                          .join("")
+                      : `
+                          <div class="failure-realloc-row">
+                            <span class="failure-realloc-row__label">Operational watch</span>
+                            <span class="failure-realloc-row__value">No planner stress flags are currently raised.</span>
+                          </div>
+                        `}
                   </div>
+                </div>
                 </div>
               </div>
             `
           : renderNotice({
               level: "warn",
               title: "Planner unavailable",
-              children: "Mission and resource state are live, but the backend planner response was not available on this refresh.",
+              children: "Mission and resource state are live, but the planner response was not available on this refresh.",
             }),
       })}
     </section>
@@ -712,23 +801,31 @@ function renderNutrition(mission: BackendMissionState, planner: BackendPlannerOu
         ${renderPanel({
           title: "Planner Forecast",
           dotColor: "var(--mars-orange)",
-          children: planner
-            ? `
-                ${renderDataTable({
-                  columns: ["Metric", "Before", "After"],
-                  rows: buildPlannerForecastRows(planner),
-                })}
-                ${renderNotice({
-                  level: "info",
-                  title: "Backend-only note",
-                  children: "Per-nutrient vitamin rows were removed because the backend does not expose that runtime breakdown yet.",
-                })}
-              `
-            : renderNotice({
-                level: "warn",
-                title: "Forecast unavailable",
-                children: "The backend planner is required for before/after nutrition forecasting.",
-              }),
+          children: `
+            <div class="nutrition-panel-stack">
+              ${
+                planner
+                  ? renderDataTable({
+                      columns: ["Metric", "Before", "After"],
+                      rows: buildPlannerForecastRows(planner),
+                    })
+                  : renderNotice({
+                      level: "warn",
+                      title: "Forecast unavailable",
+                      children: "The mission planner is required for before/after nutrition forecasting.",
+                    })
+              }
+              <div class="nutrition-micro-section">
+                <div class="section-head section-head--compact">
+                  <h3>Micronutrient Coverage</h3>
+                  <span class="section-meta">Live habitat values</span>
+                </div>
+                <div class="overview-micro-grid nutrition-micro-grid">
+                  ${buildMicronutrientMiniRows(mission).map((item) => renderMicronutrientCell(item)).join("")}
+                </div>
+              </div>
+            </div>
+          `,
         })}
       </div>
     </section>
@@ -802,103 +899,174 @@ function renderRisk(
             : renderNotice({
                 level: "warn",
                 title: "Catalog unavailable",
-                children: "The frontend removed the mock simulator. Scenario control now depends entirely on the backend catalog endpoint.",
+                children: "The mock simulator has been retired. Scenario control now depends entirely on the live scenario registry.",
               }),
       })}
     </section>
   `;
 }
 
-function renderAgent(mission: BackendMissionState, planner: BackendPlannerOutput | null): string {
+function renderAgent(
+  mission: BackendMissionState,
+  planner: BackendPlannerOutput | null,
+  agent: BackendAgentAnalysis | null,
+): string {
   return `
     <section class="agent-tab">
-      <div class="agent-kpi-row">
-        ${buildAgentMetrics(mission, planner).map((item) => renderMetricTile(item)).join("")}
-      </div>
-
-      ${renderPanel({
-        title: "Planner Recommendation",
-        dotColor: "var(--cau)",
-        rightSlot:
-          '<button class="btn btn-ghost" type="button" data-planner-refresh="true">Refresh analysis</button>',
-        children: planner
-          ? `
-              <div class="ui-notice-stack">
-                ${renderNotice({
-                  level: planner.mode === "nutrition_preservation" ? "warn" : "ok",
-                    title: `Mode - ${formatPlannerMode(planner.mode)}`,
-                  children: planner.explanation,
-                })}
-                ${planner.recommendedActions.map((action) =>
-                  renderNotice({
-                    level: "info",
-                    title: `${formatPlannerActionType(action.type)}${action.targetZoneId ? ` - ${action.targetZoneId}` : ""}`,
-                    children: `${action.description} Reason: ${action.reason}`,
-                  }),
-                ).join("")}
-              </div>
-            `
-          : renderNotice({
-              level: "warn",
-              title: "Planner unavailable",
-              children: "This tab now shows only backend analysis. No local tradeoff or confidence mocks remain.",
-            }),
-      })}
-
-      <div class="agent-detail-row">
+      <div class="agent-companion-layout">
         ${renderPanel({
-          title: "Full Decision Log",
-          dotColor: "var(--nom)",
+          title: "AETHER Companion",
+          dotColor: "var(--aero-blue)",
+          rightSlot:
+            '<button class="btn btn-ghost" type="button" data-planner-refresh="true">Refresh analysis</button>',
+          children: agent
+            ? `
+                <div class="agent-companion">
+                  <div class="agent-companion__intro">
+                    <p class="agent-companion__eyebrow mono">Signal-linked advisor channel</p>
+                    <h4 class="agent-companion__title">Mission conversation surface</h4>
+                    <p class="agent-companion__body">
+                      AETHER is framing live mission signals into an operator-ready conversation thread.
+                    </p>
+                  </div>
+
+                  <div class="agent-companion__thread ui-chat-list">
+                    <article class="ui-chat ui-chat--system agent-companion__message">
+                      <p class="ui-chat__role">System Sync</p>
+                      <p class="ui-chat__text">
+                        SOL ${mission.missionDay} linked. ${
+                          mission.activeScenario
+                            ? `${escapeHtml(mission.activeScenario.title)} is active across ${escapeHtml(mission.activeScenario.affectedZoneIds.join(", ") || "all zones")}.`
+                            : "No injected scenario is active."
+                        }
+                      </p>
+                    </article>
+
+                    <article class="ui-chat ui-chat--user agent-companion__message">
+                      <p class="ui-chat__role">Operator Prompt</p>
+                      <p class="ui-chat__text">Summarize mission risk, preserve crew nutrition, and propose the next safe action set.</p>
+                    </article>
+
+                    <article class="ui-chat ui-chat--agent agent-companion__message">
+                      <p class="ui-chat__role">AETHER</p>
+                      <p class="ui-chat__text">${escapeHtml(agent.riskSummary)}</p>
+                    </article>
+
+                    <article class="ui-chat ui-chat--agent agent-companion__message">
+                      <p class="ui-chat__role">AETHER</p>
+                      <p class="ui-chat__text">${escapeHtml(agent.explanation)}</p>
+                    </article>
+
+                    <article class="ui-chat ui-chat--agent agent-companion__message">
+                      <p class="ui-chat__role">Action Signal</p>
+                      ${
+                        agent.recommendedActions.length > 0
+                          ? `
+                              <div class="agent-companion__action-list">
+                                ${agent.recommendedActions
+                                  .slice(0, 3)
+                                  .map(
+                                    (action) => `
+                                      <div class="agent-companion__action-item">
+                                        <div class="agent-companion__action-head">
+                                          <span class="agent-companion__action-title">${escapeHtml(formatPlannerActionType(action.type))}${action.targetZoneId ? ` - ${escapeHtml(action.targetZoneId)}` : ""}</span>
+                                          ${renderStatusBadge(action.urgency.replaceAll("_", " "), urgencyTone(action.urgency))}
+                                        </div>
+                                        <p class="ui-chat__text">${escapeHtml(action.description)}</p>
+                                      </div>
+                                    `,
+                                  )
+                                  .join("")}
+                              </div>
+                            `
+                          : '<p class="ui-chat__text">No immediate operator action set is being carried on this pass.</p>'
+                      }
+                    </article>
+                  </div>
+
+                  <div class="agent-companion__composer">
+                    <p class="agent-companion__composer-note">
+                      Conversational uplink is being prepared. Live companion signals are available now.
+                    </p>
+                    <div class="agent-companion__composer-row">
+                      <input
+                        class="agent-companion__input"
+                        type="text"
+                        value=""
+                        placeholder="AETHER companion chat will come online here..."
+                        disabled
+                      />
+                      <button class="btn btn-primary agent-companion__send" type="button" disabled>Transmit</button>
+                    </div>
+                  </div>
+                </div>
+              `
+            : renderNotice({
+                level: "warn",
+                title: "Companion offline",
+                children: "The mission snapshot is live, but the advisor did not return any signal bundle for this refresh.",
+              }),
+        })}
+
+        ${renderPanel({
+          title: "Signal Rail",
+          dotColor: "var(--cau)",
           children: `
-            <div class="agent-log-panel">
-              <div class="agent-log-toolbar">
-                <span class="mono">Backend event stream</span>
-                <span class="mono">${mission.eventLog.length} entries</span>
+            <div class="agent-signal-rail">
+              <div class="agent-signal-list">
+                <article class="agent-signal-card">
+                  <p class="agent-signal-card__label">Risk Signal</p>
+                  <p class="agent-signal-card__value">${agent ? formatRiskLevel(agent.riskLevel) : "Unavailable"}</p>
+                  <p class="agent-signal-card__meta">${agent ? "Companion risk posture" : "Awaiting advisor signal"}</p>
+                </article>
+
+                <article class="agent-signal-card">
+                  <p class="agent-signal-card__label">Planner Mode</p>
+                  <p class="agent-signal-card__value">${planner ? formatPlannerMode(planner.mode) : "Unavailable"}</p>
+                  <p class="agent-signal-card__meta">${planner?.nutritionRiskDetected ? "Nutrition watch active" : "Stable planning posture"}</p>
+                </article>
+
+                <article class="agent-signal-card">
+                  <p class="agent-signal-card__label">Action Set</p>
+                  <p class="agent-signal-card__value">${agent ? agent.recommendedActions.length : 0}</p>
+                  <p class="agent-signal-card__meta">Operator actions in queue</p>
+                </article>
+
+                <article class="agent-signal-card">
+                  <p class="agent-signal-card__label">Scenario Link</p>
+                  <p class="agent-signal-card__value">${mission.activeScenario ? formatScenarioSeverity(mission.activeScenario.severity) : "Nominal"}</p>
+                  <p class="agent-signal-card__meta">${mission.activeScenario ? escapeHtml(mission.activeScenario.title) : "No live injected scenario"}</p>
+                </article>
               </div>
-              <div class="agent-log-scroll">
-                ${mission.eventLog.map((entry) => renderMissionLogEntry(entry)).join("")}
+
+              <div class="agent-signal-block">
+                <p class="agent-signal-block__title">Critical Signals</p>
+                ${
+                  agent && agent.criticalNutrientDependencies.length > 0
+                    ? `
+                        <div class="ui-notice-stack">
+                          ${agent.criticalNutrientDependencies
+                            .slice(0, 4)
+                            .map((dependency, index) =>
+                              renderNotice({
+                                level: "info",
+                                title: `Signal ${index + 1}`,
+                                children: dependency,
+                              }),
+                            )
+                            .join("")}
+                        </div>
+                      `
+                    : renderNotice({
+                        level: "info",
+                        title: "Signal map",
+                        children: "No additional dependency signals are being carried on this pass.",
+                      })
+                }
               </div>
             </div>
           `,
         })}
-
-        <div class="agent-side-stack">
-          ${renderPanel({
-            title: "Nutrition Forecast",
-            dotColor: "var(--mars-orange)",
-            children: planner
-              ? renderDataTable({
-                  columns: ["Metric", "Before", "After"],
-                  rows: buildPlannerForecastRows(planner),
-                })
-              : renderNotice({
-                  level: "warn",
-                  title: "No forecast",
-                  children: "Run planner analysis to retrieve a backend nutrition forecast snapshot.",
-                }),
-          })}
-
-          ${renderPanel({
-            title: "Mission Snapshot",
-            dotColor: "var(--aero-blue)",
-            children: `
-              <div class="ui-notice-stack">
-                ${renderNotice({
-                  level: "info",
-                  title: `Mission day ${mission.missionDay}`,
-                  children: `Status: ${formatMissionStatus(mission.status)}. Crew size: ${mission.crewSize}. Last updated: ${formatTimestamp(mission.lastUpdated)}.`,
-                })}
-                ${renderNotice({
-                  level: mission.activeScenario ? noticeFromTone(severityTone(mission.activeScenario.severity)) : "ok",
-                  title: mission.activeScenario ? mission.activeScenario.title : "No active scenario",
-                  children: mission.activeScenario
-                    ? mission.activeScenario.description
-                    : "The backend mission snapshot currently reports nominal operations with no injected failure scenario.",
-                })}
-              </div>
-            `,
-          })}
-        </div>
       </div>
     </section>
   `;
@@ -906,12 +1074,12 @@ function renderAgent(mission: BackendMissionState, planner: BackendPlannerOutput
 
 function renderBootState(): string {
   return renderPanel({
-    title: "Backend Sync",
+    title: "Mission Sync",
     dotColor: "var(--aero-blue)",
     children: renderNotice({
       level: "info",
       title: "Loading runtime state",
-      children: "The dashboard is waiting for /api/mission/state and related backend endpoints before rendering mission data.",
+      children: "The dashboard is waiting for the mission state feed and related runtime services before rendering mission data.",
     }),
   });
 }
@@ -928,7 +1096,7 @@ function renderMissionAlert(mission: BackendMissionState): string {
   return renderAlertStrip({
     level: alertFromTone(missionTone(mission)),
     label: "Mission Status",
-    children: `Mission control is synced to backend state. Overall status is ${formatMissionStatus(mission.status)}.`,
+    children: `Mission control is synced to the live habitat state. Overall status is ${formatMissionStatus(mission.status)}.`,
   });
 }
 
@@ -944,7 +1112,7 @@ function renderRiskAlert(mission: BackendMissionState): string {
   return renderAlertStrip({
     level: "nom",
     label: "No Active Scenario",
-    children: "Risk tab is now driven by the backend scenario catalog and live mission log only.",
+    children: "Risk tab is now driven by the scenario registry and live mission log only.",
   });
 }
 
@@ -959,7 +1127,7 @@ function renderBusyStrip(message: string): string {
 function renderErrorStrip(message: string): string {
   return renderAlertStrip({
     level: "abt",
-    label: "Backend Error",
+    label: "Runtime Fault",
     children: message,
   });
 }
@@ -967,6 +1135,7 @@ function renderErrorStrip(message: string): string {
 function createHeaderModel(
   mission: BackendMissionState | null,
   planner: BackendPlannerOutput | null,
+  agent: BackendAgentAnalysis | null,
 ): HeaderModel {
   if (!mission) {
     return {
@@ -977,7 +1146,7 @@ function createHeaderModel(
       agentState: "SYNCING",
       lastAction: "Connecting",
       systemTone: "CAU",
-      systemLabel: "Backend pending",
+      systemLabel: "Runtime pending",
     };
   }
 
@@ -986,8 +1155,8 @@ function createHeaderModel(
     subtitle: "Mars Autonomous Greenhouse",
     missionDay: mission.missionDay,
     missionDurationTotal: mission.missionDurationDays,
-    agentState: planner ? formatPlannerMode(planner.mode) : "Planner unavailable",
-    lastAction: mission.eventLog[0] ? formatEventStamp(mission.eventLog[0]) : "No events",
+    agentState: agent ? formatRiskLevel(agent.riskLevel) : planner ? formatPlannerMode(planner.mode) : "Unavailable",
+    lastAction: agent ? formatTimestamp(agent.timestamp) : mission.eventLog[0] ? formatEventStamp(mission.eventLog[0]) : "No events",
     systemTone: missionTone(mission),
     systemLabel: formatMissionStatus(mission.status),
   };
@@ -995,14 +1164,19 @@ function createHeaderModel(
 
 function createNavigationTabs(
   mission: BackendMissionState | null,
-  planner: BackendPlannerOutput | null,
+  agent: BackendAgentAnalysis | null,
 ): TabDefinition[] {
   const warningCount = mission
     ? mission.eventLog.filter((entry) => entry.level !== "info").length
     : undefined;
   const nutritionAlert = mission && mission.nutrition.caloricCoveragePercent < 100 ? 1 : undefined;
   const scenarioAlert = mission?.activeScenario ? 1 : warningCount;
-  const plannerAlert = planner && planner.recommendedActions.length > 0 ? planner.recommendedActions.length : undefined;
+  const agentAlert =
+    agent && agent.recommendedActions.length > 0
+      ? agent.recommendedActions.length
+      : agent && agent.riskLevel !== "low"
+        ? 1
+        : undefined;
 
   return tabs.map((tab) => ({
     id: tab.id,
@@ -1015,7 +1189,7 @@ function createNavigationTabs(
         : tab.id === "nutrition"
           ? nutritionAlert
           : tab.id === "agent"
-            ? plannerAlert
+            ? agentAlert
             : undefined,
   }));
 }
@@ -1098,7 +1272,7 @@ function buildCropMetrics(mission: BackendMissionState): MetricTileData[] {
     {
       label: "Active Cultivation",
       value: `${mission.zones.length}`,
-      sub: "Zones reported by backend",
+      sub: "Zones in live habitat feed",
       progress: 100,
       progressColor: "var(--nom)",
       level: "NOM" as StatusTone,
@@ -1223,13 +1397,14 @@ function buildNutritionMetrics(mission: BackendMissionState): MetricTileData[] {
 function buildRiskMetrics(mission: BackendMissionState): MetricTileData[] {
   const warningEvents = mission.eventLog.filter((entry) => entry.level === "warning").length;
   const criticalEvents = mission.eventLog.filter((entry) => entry.level === "critical").length;
+  const alertEvents = warningEvents + criticalEvents;
   const stressedZones = mission.zones.filter((zone) => zone.stress.active).length;
 
   return [
     {
       label: "Mission Status",
       value: formatMissionStatus(mission.status),
-      sub: "Backend system flag",
+      sub: "Runtime mission flag",
       progress: mission.status === "critical" ? 100 : mission.status === "warning" ? 65 : 28,
       progressColor: mission.status === "critical" ? "var(--abt)" : mission.status === "warning" ? "var(--cau)" : "var(--nom)",
       level: missionTone(mission),
@@ -1243,10 +1418,10 @@ function buildRiskMetrics(mission: BackendMissionState): MetricTileData[] {
       level: mission.activeScenario ? severityTone(mission.activeScenario.severity) : "NOM",
     },
     {
-      label: "Warning Events",
-      value: `${warningEvents}`,
-      sub: `${criticalEvents} critical events`,
-      progress: clampPercent((warningEvents + criticalEvents) * 18),
+      label: "Alert Events",
+      value: `${alertEvents}`,
+      sub: `${warningEvents} warning · ${criticalEvents} critical`,
+      progress: clampPercent(alertEvents * 18),
       progressColor: criticalEvents > 0 ? "var(--abt)" : "var(--cau)",
       level: criticalEvents > 0 ? "ABT" : warningEvents > 0 ? "CAU" : "NOM",
     },
@@ -1257,50 +1432,6 @@ function buildRiskMetrics(mission: BackendMissionState): MetricTileData[] {
       progress: clampPercent((stressedZones / Math.max(mission.zones.length, 1)) * 100),
       progressColor: "var(--abt)",
       level: stressedZones === 0 ? "NOM" : stressedZones < 2 ? "CAU" : "ABT",
-    },
-  ];
-}
-
-function buildAgentMetrics(
-  mission: BackendMissionState,
-  planner: BackendPlannerOutput | null,
-): MetricTileData[] {
-  const before = planner?.nutritionForecast.before;
-  const after = planner?.nutritionForecast.after;
-  const actionCount = planner?.recommendedActions.length ?? 0;
-
-  return [
-    {
-      label: "Planner Mode",
-      value: planner ? formatPlannerMode(planner.mode) : "Unavailable",
-      sub: "Backend planner status",
-      progress: planner?.mode === "nutrition_preservation" ? 72 : 32,
-      progressColor: planner?.mode === "nutrition_preservation" ? "var(--cau)" : "var(--nom)",
-      level: planner?.mode === "nutrition_preservation" ? "CAU" : "NOM",
-    },
-    {
-      label: "Actions",
-      value: `${actionCount}`,
-      sub: "Recommended next steps",
-      progress: clampPercent(actionCount * 20),
-      progressColor: "var(--aero-blue)",
-      level: actionCount > 0 ? "CAU" : "NOM",
-    },
-    {
-      label: "Calorie Delta",
-      value: before && after ? `${after.caloricCoveragePercent - before.caloricCoveragePercent}%` : "--",
-      sub: "Planner forecast change",
-      progress: before && after ? clampPercent(after.caloricCoveragePercent) : 0,
-      progressColor: "var(--mars-orange)",
-      level: before && after ? toneFromPercent(after.caloricCoveragePercent, 95, 75) : "CAU",
-    },
-    {
-      label: "Protein Delta",
-      value: before && after ? `${after.proteinCoveragePercent - before.proteinCoveragePercent}%` : "--",
-      sub: `Last updated ${formatTimestamp(mission.lastUpdated)}`,
-      progress: before && after ? clampPercent(after.proteinCoveragePercent) : 0,
-      progressColor: "var(--nom)",
-      level: before && after ? toneFromPercent(after.proteinCoveragePercent, 95, 75) : "CAU",
     },
   ];
 }
@@ -1392,7 +1523,7 @@ function buildZoneTelemetry(zone: BackendCropZone) {
     {
       label: "Projected Yield",
       value: `${zone.projectedYieldKg.toFixed(1)} kg`,
-      sub: "Current backend estimate",
+      sub: "Current habitat estimate",
       progress: clampPercent(zone.projectedYieldKg * 4),
       progressColor: "var(--mars-orange)",
       level: zoneTone(zone),
@@ -1518,48 +1649,126 @@ function buildMicronutrientMiniRows(
       label: "Vit A",
       produced: `${mission.nutrition.vitaminA.produced}${mission.nutrition.vitaminA.unit}`,
       target: `${mission.nutrition.vitaminA.target}${mission.nutrition.vitaminA.unit}`,
-      coveragePercent: mission.nutrition.vitaminA.coveragePercent,
-      tone: toneFromPercent(mission.nutrition.vitaminA.coveragePercent, 95, 75),
+      coveragePercent: deriveDisplayedCoveragePercent(
+        mission.nutrition.vitaminA.produced,
+        mission.nutrition.vitaminA.target,
+      ),
+      tone: toneFromPercent(
+        deriveDisplayedCoveragePercent(
+          mission.nutrition.vitaminA.produced,
+          mission.nutrition.vitaminA.target,
+        ),
+        95,
+        75,
+      ),
     },
     {
       id: "vitc",
       label: "Vit C",
       produced: `${mission.nutrition.vitaminC.produced}${mission.nutrition.vitaminC.unit}`,
       target: `${mission.nutrition.vitaminC.target}${mission.nutrition.vitaminC.unit}`,
-      coveragePercent: mission.nutrition.vitaminC.coveragePercent,
-      tone: toneFromPercent(mission.nutrition.vitaminC.coveragePercent, 95, 75),
+      coveragePercent: deriveDisplayedCoveragePercent(
+        mission.nutrition.vitaminC.produced,
+        mission.nutrition.vitaminC.target,
+      ),
+      tone: toneFromPercent(
+        deriveDisplayedCoveragePercent(
+          mission.nutrition.vitaminC.produced,
+          mission.nutrition.vitaminC.target,
+        ),
+        95,
+        75,
+      ),
+    },
+    {
+      id: "vitk",
+      label: "Vit K",
+      produced: `${mission.nutrition.vitaminK.produced}${mission.nutrition.vitaminK.unit}`,
+      target: `${mission.nutrition.vitaminK.target}${mission.nutrition.vitaminK.unit}`,
+      coveragePercent: deriveDisplayedCoveragePercent(
+        mission.nutrition.vitaminK.produced,
+        mission.nutrition.vitaminK.target,
+      ),
+      tone: toneFromPercent(
+        deriveDisplayedCoveragePercent(
+          mission.nutrition.vitaminK.produced,
+          mission.nutrition.vitaminK.target,
+        ),
+        95,
+        75,
+      ),
     },
     {
       id: "fol",
       label: "Folate",
       produced: `${mission.nutrition.folate.produced}${mission.nutrition.folate.unit}`,
       target: `${mission.nutrition.folate.target}${mission.nutrition.folate.unit}`,
-      coveragePercent: mission.nutrition.folate.coveragePercent,
-      tone: toneFromPercent(mission.nutrition.folate.coveragePercent, 95, 75),
+      coveragePercent: deriveDisplayedCoveragePercent(
+        mission.nutrition.folate.produced,
+        mission.nutrition.folate.target,
+      ),
+      tone: toneFromPercent(
+        deriveDisplayedCoveragePercent(
+          mission.nutrition.folate.produced,
+          mission.nutrition.folate.target,
+        ),
+        95,
+        75,
+      ),
     },
     {
       id: "iron",
       label: "Iron",
       produced: `${mission.nutrition.iron.produced}${mission.nutrition.iron.unit}`,
       target: `${mission.nutrition.iron.target}${mission.nutrition.iron.unit}`,
-      coveragePercent: mission.nutrition.iron.coveragePercent,
-      tone: toneFromPercent(mission.nutrition.iron.coveragePercent, 95, 75),
+      coveragePercent: deriveDisplayedCoveragePercent(
+        mission.nutrition.iron.produced,
+        mission.nutrition.iron.target,
+      ),
+      tone: toneFromPercent(
+        deriveDisplayedCoveragePercent(
+          mission.nutrition.iron.produced,
+          mission.nutrition.iron.target,
+        ),
+        95,
+        75,
+      ),
     },
     {
       id: "pot",
       label: "Potassium",
       produced: `${mission.nutrition.potassium.produced}${mission.nutrition.potassium.unit}`,
       target: `${mission.nutrition.potassium.target}${mission.nutrition.potassium.unit}`,
-      coveragePercent: mission.nutrition.potassium.coveragePercent,
-      tone: toneFromPercent(mission.nutrition.potassium.coveragePercent, 95, 75),
+      coveragePercent: deriveDisplayedCoveragePercent(
+        mission.nutrition.potassium.produced,
+        mission.nutrition.potassium.target,
+      ),
+      tone: toneFromPercent(
+        deriveDisplayedCoveragePercent(
+          mission.nutrition.potassium.produced,
+          mission.nutrition.potassium.target,
+        ),
+        95,
+        75,
+      ),
     },
     {
       id: "mag",
       label: "Magnesium",
       produced: `${mission.nutrition.magnesium.produced}${mission.nutrition.magnesium.unit}`,
       target: `${mission.nutrition.magnesium.target}${mission.nutrition.magnesium.unit}`,
-      coveragePercent: mission.nutrition.magnesium.coveragePercent,
-      tone: toneFromPercent(mission.nutrition.magnesium.coveragePercent, 95, 75),
+      coveragePercent: deriveDisplayedCoveragePercent(
+        mission.nutrition.magnesium.produced,
+        mission.nutrition.magnesium.target,
+      ),
+      tone: toneFromPercent(
+        deriveDisplayedCoveragePercent(
+          mission.nutrition.magnesium.produced,
+          mission.nutrition.magnesium.target,
+        ),
+        95,
+        75,
+      ),
     },
   ];
 }
@@ -1635,7 +1844,7 @@ function buildNutrientSolutionMetrics(mission: BackendMissionState): MetricTileD
     {
       label: "Mix Status",
       value: formatNutrientMixStatus(mission.resources.nutrientMixStatus),
-      sub: "Backend chemistry flag",
+      sub: "Runtime chemistry flag",
       progress: mission.resources.nutrientMixStatus === "balanced" ? 100 : mission.resources.nutrientMixStatus === "watch" ? 62 : 28,
       progressColor: mission.resources.nutrientMixStatus === "balanced" ? "var(--nom)" : mission.resources.nutrientMixStatus === "watch" ? "var(--cau)" : "var(--abt)",
       level: toneFromMixStatus(mission.resources.nutrientMixStatus),
@@ -2056,7 +2265,8 @@ function renderIncidentPanel(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
 ): string {
-  const primaryAction = planner?.recommendedActions[0];
+  const primaryChange = planner?.changes[0];
+  const primaryFlag = planner?.stressFlags[0];
   const incidentLabel = mission.activeScenario
     ? `${mission.activeScenario.title} · ${formatScenarioSeverity(mission.activeScenario.severity)}`
     : "No active scenario";
@@ -2078,13 +2288,19 @@ function renderIncidentPanel(
         )}</span>
       </div>
       <div class="incident-panel__row">
-        <span class="incident-panel__label">Actions queued</span>
-        <span class="incident-panel__value mono">${planner?.recommendedActions.length ?? 0}</span>
+        <span class="incident-panel__label">Projected changes</span>
+        <span class="incident-panel__value mono">${planner?.changes.length ?? 0}</span>
       </div>
       <div class="incident-panel__row">
-        <span class="incident-panel__label">Priority response</span>
+        <span class="incident-panel__label">Primary watch</span>
         <span class="incident-panel__value incident-panel__value--wrap">
-          ${primaryAction ? escapeHtml(primaryAction.description) : "No planner action required."}
+          ${
+            primaryFlag
+              ? `${escapeHtml(primaryFlag.zoneId)} ${escapeHtml(primaryFlag.stressType.replaceAll("_", " "))} (${escapeHtml(primaryFlag.severity)})`
+              : primaryChange
+                ? `${escapeHtml(primaryChange.field)} → ${escapeHtml(String(primaryChange.newValue))}`
+                : "No planner watch item raised."
+          }
         </span>
       </div>
       ${
@@ -2172,6 +2388,8 @@ function renderForecastRow(label: string, before: number, after: number): string
   `;
 }
 
+void renderForecastRow;
+
 function missionTone(mission: BackendMissionState): StatusTone {
   if (mission.status === "critical") {
     return "ABT";
@@ -2220,6 +2438,18 @@ function severityTone(severity: BackendScenarioSeverity): StatusTone {
   }
 
   if (severity === "moderate") {
+    return "CAU";
+  }
+
+  return "NOM";
+}
+
+function urgencyTone(urgency: BackendAgentAnalysis["recommendedActions"][number]["urgency"]): StatusTone {
+  if (urgency === "immediate") {
+    return "ABT";
+  }
+
+  if (urgency === "within_24h") {
     return "CAU";
   }
 
@@ -2329,7 +2559,10 @@ function noticeFromTone(tone: StatusTone): "ok" | "info" | "warn" | "crit" {
 }
 
 function formatMissionStatus(status: BackendMissionState["status"]): string {
-  return status.replaceAll("_", " ");
+  return status
+    .split("_")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function formatCropType(type: BackendCropZone["cropType"]): string {
@@ -2353,11 +2586,41 @@ function formatScenarioSeverity(severity: BackendScenarioSeverity): string {
 }
 
 function formatPlannerMode(mode: BackendPlannerOutput["mode"] | undefined): string {
-  return (mode ?? "normal").replaceAll("_", " ");
+  return (mode ?? "normal")
+    .split("_")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
-function formatPlannerActionType(type: NonNullable<BackendPlannerOutput>["recommendedActions"][number]["type"]): string {
+function formatPlannerActionType(type: BackendAgentAnalysis["recommendedActions"][number]["type"]): string {
   return type.replaceAll("_", " ");
+}
+
+function formatRiskLevel(riskLevel: BackendAgentAnalysis["riskLevel"]): string {
+  return riskLevel.slice(0, 1).toUpperCase() + riskLevel.slice(1);
+}
+
+function formatPlannerField(value: string): string {
+  return value
+    .split(".")
+    .map((segment) =>
+      segment
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replaceAll("_", " ")
+        .split(" ")
+        .filter(Boolean)
+        .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+        .join(" "),
+    )
+    .join(" · ");
+}
+
+function formatPlannerValue(value: string | number | boolean): string {
+  if (typeof value === "boolean") {
+    return value ? "Enabled" : "Disabled";
+  }
+
+  return String(value);
 }
 
 function formatNutrientMixStatus(status: BackendMissionState["resources"]["nutrientMixStatus"]): string {
@@ -2413,12 +2676,20 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function deriveDisplayedCoveragePercent(produced: number, target: number): number {
+  if (target <= 0) {
+    return 0;
+  }
+
+  return Math.round((produced / target) * 100);
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
     return error.message;
   }
 
-  return "The frontend could not reach the backend runtime endpoints.";
+  return "Mission control could not reach the live habitat runtime services.";
 }
 
 function escapeHtml(value: string): string {

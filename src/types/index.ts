@@ -405,6 +405,8 @@ export type BackendPlannerActionType =
   | "prioritize_zone"
   | "trigger_harvest_early"
   | "adjust_nutrient_mix";
+export type BackendUrgencyLevel = "immediate" | "within_24h" | "strategic";
+export type BackendRiskLevel = "low" | "moderate" | "high" | "critical";
 
 export interface BackendZoneStress {
   active: boolean;
@@ -536,11 +538,15 @@ export interface BackendScenarioCatalogItem {
   severities: BackendScenarioSeverityOption[];
 }
 
-export interface BackendPlannerAction {
+export interface BackendAgentAction {
+  actionId: string;
   type: BackendPlannerActionType;
+  urgency: BackendUrgencyLevel;
   targetZoneId?: string;
   description: string;
-  reason: string;
+  parameterChanges: Record<string, number>;
+  nutritionImpact: string;
+  tradeoff: string;
 }
 
 export interface BackendNutritionForecast {
@@ -548,11 +554,66 @@ export interface BackendNutritionForecast {
   after: BackendNutritionStatus;
 }
 
+export interface BackendPlannerChange {
+  field: string;
+  previousValue: number | string | boolean;
+  newValue: number | string | boolean;
+  reason: string;
+}
+
+export interface BackendPlannerStressFlag {
+  zoneId: string;
+  stressType: string;
+  severity: string;
+  detectedAt: string;
+  rule: string;
+}
+
 export interface BackendPlannerOutput {
   mode: BackendPlannerMode;
-  recommendedActions: BackendPlannerAction[];
+  nutritionRiskDetected: boolean;
+  changes: BackendPlannerChange[];
+  stressFlags: BackendPlannerStressFlag[];
   nutritionForecast: BackendNutritionForecast;
   explanation: string;
+}
+
+export interface BackendAgentComparison {
+  before: {
+    caloricCoveragePercent: number;
+    proteinCoveragePercent: number;
+    nutritionalCoverageScore: number;
+    daysSafe: number;
+  };
+  after: {
+    caloricCoveragePercent: number;
+    proteinCoveragePercent: number;
+    nutritionalCoverageScore: number;
+    daysSafe: number;
+  };
+  delta: {
+    caloricCoverageDelta: number;
+    proteinCoverageDelta: number;
+    scoreDelta: number;
+    daysSafeDelta: number;
+  };
+  summary: string;
+}
+
+export interface BackendAgentAnalysis {
+  decisionId: string;
+  missionDay: number;
+  timestamp: string;
+  riskLevel: BackendRiskLevel;
+  riskSummary: string;
+  nutritionPreservationMode: boolean;
+  recommendedActions: BackendAgentAction[];
+  comparison: BackendAgentComparison;
+  explanation: string;
+  criticalNutrientDependencies: string[];
+  triggeredByScenario: string | null;
+  kbContextUsed: boolean;
+  implementationStatus: "stub";
 }
 
 export interface BackendScenarioInjectRequest {

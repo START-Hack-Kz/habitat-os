@@ -1,11 +1,14 @@
 import type {
+  BackendAgentAction,
+  BackendAgentAnalysis,
   BackendMissionState,
   BackendPlannerOutput,
-  BackendPlannerAction,
   BackendScenarioCatalogItem,
   BackendScenarioInjectRequest,
   BackendScenarioSeverityOption,
   BackendNutritionStatus,
+  BackendPlannerChange,
+  BackendPlannerStressFlag,
 } from "../types";
 import type { AIDecision } from "../../shared/schemas/aiDecision.schema";
 import type {
@@ -290,19 +293,21 @@ function mapScenarioCatalogItem(item: ScenarioCatalogEntry): BackendScenarioCata
   };
 }
 
-function mapRecommendedActions(
-  decision: AIDecision,
-): BackendPlannerAction[] {
+function mapAgentActions(decision: AIDecision): BackendAgentAction[] {
   return decision.recommendedActions.map((action) => ({
+    actionId: action.actionId,
     type:
       action.actionType === "adjust_temperature_setpoint"
         ? "adjust_temperature_setpoint"
         : action.actionType === "pause_zone"
           ? "pause_zone"
           : action.actionType,
+    urgency: action.urgency,
     targetZoneId: action.targetZoneId,
     description: action.description,
-    reason: `${action.nutritionImpact} Tradeoff: ${action.tradeoff}`,
+    parameterChanges: action.parameterChanges,
+    nutritionImpact: action.nutritionImpact,
+    tradeoff: action.tradeoff,
   }));
 }
 
@@ -327,6 +332,48 @@ function buildPlannerExplanation(planner: PlannerOutput): string {
   return planner.nutritionRiskDetected
     ? `Nutrition risk is active. Key projected changes: ${topChanges}.`
     : `Planner analysis completed with no nutrition-preservation trigger. Key state changes: ${topChanges}.`;
+}
+
+function mapPlannerChanges(planner: PlannerOutput): BackendPlannerChange[] {
+  return planner.changes.map((change) => ({
+    field: change.field,
+    previousValue: change.previousValue,
+    newValue: change.newValue,
+    reason: change.reason,
+  }));
+}
+
+function mapPlannerStressFlags(planner: PlannerOutput): BackendPlannerStressFlag[] {
+  return planner.stressFlags.map((flag) => ({
+    zoneId: flag.zoneId,
+    stressType: flag.stressType,
+    severity: flag.severity,
+    detectedAt: flag.detectedAt,
+    rule: flag.rule,
+  }));
+}
+
+function mapAgentAnalysis(decision: AIDecision): BackendAgentAnalysis {
+  return {
+    decisionId: decision.decisionId,
+    missionDay: decision.missionDay,
+    timestamp: decision.timestamp,
+    riskLevel: decision.riskLevel,
+    riskSummary: decision.riskSummary,
+    nutritionPreservationMode: decision.nutritionPreservationMode,
+    recommendedActions: mapAgentActions(decision),
+    comparison: {
+      before: decision.comparison.before,
+      after: decision.comparison.after,
+      delta: decision.comparison.delta,
+      summary: decision.comparison.summary,
+    },
+    explanation: decision.explanation,
+    criticalNutrientDependencies: decision.criticalNutrientDependencies,
+    triggeredByScenario: decision.triggeredByScenario,
+    kbContextUsed: decision.kbContextUsed,
+    implementationStatus: "stub",
+  };
 }
 
 async function fetchCanonicalMissionState(): Promise<MissionState> {
@@ -358,21 +405,27 @@ export function fetchScenarioCatalog(): Promise<BackendScenarioCatalogItem[]> {
 }
 
 export async function fetchPlannerAnalysis(): Promise<BackendPlannerOutput> {
-  const [beforeMission, planner, agent] = await Promise.all([
+  const [beforeMission, planner] = await Promise.all([
     fetchCanonicalMissionState(),
     fetchCanonicalPlannerOutput(),
-    fetchCanonicalAgentDecision().catch(() => null),
   ]);
 
   return {
     mode: derivePlannerMode(planner),
-    recommendedActions: agent ? mapRecommendedActions(agent) : [],
+    nutritionRiskDetected: planner.nutritionRiskDetected,
+    changes: mapPlannerChanges(planner),
+    stressFlags: mapPlannerStressFlags(planner),
     nutritionForecast: {
       before: mapNutritionStatus(beforeMission.nutrition),
       after: mapNutritionStatus(planner.missionState.nutrition),
     },
-    explanation: agent?.explanation ?? buildPlannerExplanation(planner),
+    explanation: buildPlannerExplanation(planner),
   };
+}
+
+export async function fetchAgentAnalysis(): Promise<BackendAgentAnalysis> {
+  const decision = await fetchCanonicalAgentDecision();
+  return mapAgentAnalysis(decision);
 }
 
 export async function injectScenario(
