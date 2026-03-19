@@ -68,6 +68,20 @@ function shouldEnterNutritionPreservationMode(state: MissionState): boolean {
     return true;
   }
 
+  if (
+    state.activeScenario &&
+    (
+      state.activeScenario.severity === "critical" ||
+      (
+        (state.activeScenario.scenarioType === "water_recycling_decline" ||
+          state.activeScenario.scenarioType === "energy_budget_reduction") &&
+        state.activeScenario.severity === "moderate"
+      )
+    )
+  ) {
+    return true;
+  }
+
   return (
     state.nutrition.nutritionalCoverageScore < NUTRITION_PRESERVATION_SCORE_THRESHOLD ||
     state.nutrition.daysSafe < NUTRITION_PRESERVATION_DAYS_THRESHOLD
@@ -246,18 +260,6 @@ function findHighestPriorityZone(state: MissionState): MissionState["zones"][num
 
 function findSecondaryPriorityZone(state: MissionState): MissionState["zones"][number] | undefined {
   return getPrioritySortedZones(state, false)[1];
-}
-
-function getScenarioZone(
-  state: MissionState,
-): MissionState["zones"][number] | undefined {
-  const zoneId = state.activeScenario?.affectedZones[0];
-
-  if (!zoneId) {
-    return undefined;
-  }
-
-  return state.zones.find((zone) => zone.zoneId === zoneId);
 }
 
 function getPriorityRecipients(

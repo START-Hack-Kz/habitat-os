@@ -628,7 +628,16 @@ export interface BackendAgentAnalysis {
   implementationStatus: "stub";
 }
 
+<<<<<<< HEAD
 export type BackendAgentChatConfidence = "low" | "medium" | "high";
+=======
+export type BackendAgentAnalyzeFocus =
+  | "mission_overview"
+  | "nutrition_risk"
+  | "scenario_response";
+
+export type BackendAgentChatConfidence = "high" | "medium" | "low";
+>>>>>>> 3ce8c794337794602881965d18258dc26accf9e6
 
 export interface BackendAgentChatResponse {
   answer: string;
@@ -643,4 +652,127 @@ export interface BackendScenarioInjectRequest {
   scenarioType: BackendScenarioType;
   severity?: BackendScenarioSeverity;
   affectedZoneIds?: string[];
+}
+
+export interface BackendSimulationZoneOverride {
+  zoneId: string;
+  temperature?: number;
+  humidity?: number;
+  co2Ppm?: number;
+  lightPAR?: number;
+  photoperiodHours?: number;
+  nutrientPH?: number;
+  electricalConductivity?: number;
+  soilMoisture?: number;
+}
+
+export interface BackendSimulationResourceOverride {
+  waterRecyclingEfficiencyPercent?: number;
+  waterDailyConsumptionL?: number;
+  waterReservoirL?: number;
+  energyAvailableKwh?: number;
+  energyDailyConsumptionKwh?: number;
+  solarGenerationKwhPerDay?: number;
+  nutrientN?: number;
+  nutrientP?: number;
+  nutrientK?: number;
+}
+
+export interface BackendSimulationTweakRequest {
+  zones?: BackendSimulationZoneOverride[];
+  resources?: BackendSimulationResourceOverride;
+}
+
+export type ControlActionType =
+  | "increase_irrigation"
+  | "reduce_irrigation"
+  | "adjust_humidity"
+  | "adjust_temperature"
+  | "increase_lighting"
+  | "reduce_lighting"
+  | "rebalance_lighting"
+  | "adjust_nutrient_ph"
+  | "adjust_nutrient_dose"
+  | "flush_solution"
+  | "reallocate_water"
+  | "rebalance_energy"
+  | "flag_manual_attention";
+
+export type ControlActionPriority = "info" | "warning" | "critical";
+
+export type ControlRelatedSensor =
+  | keyof BackendZoneSensors
+  | "waterRecyclingEfficiencyPercent"
+  | "waterDaysRemaining"
+  | "energyAvailableKwh"
+  | "energyDaysRemaining"
+  | "missionStatus"
+  | "activeScenario";
+
+export interface ControlActionItem {
+  id: string;
+  abnormalityKey: string;
+  actionType: ControlActionType;
+  label: string;
+  priority: ControlActionPriority;
+  targetLabel: string;
+  targetZoneId?: string;
+  systemArea: string;
+  triggerReason: string;
+  relatedSensors: ControlRelatedSensor[];
+  recommendedSection: TabId;
+  autoTriggered: boolean;
+  advisoryOnly: boolean;
+  severityRank: number;
+  headline: string;
+  summary: string;
+  detectedAt: string;
+}
+
+export interface ControlAlert {
+  id: string;
+  abnormalityKey: string;
+  kind: "recommendation" | "automation";
+  level: AlertLevel;
+  title: string;
+  message: string;
+  actionLabels: string[];
+  targetLabel: string;
+  timestamp: string;
+}
+
+export interface ControlLogEntry {
+  id: string;
+  abnormalityKey: string;
+  kind: "recommendation" | "automation";
+  timestamp: string;
+  priority: ControlActionPriority;
+  headline: string;
+  message: string;
+  targetLabel: string;
+  targetZoneId?: string;
+  actionLabels: string[];
+  relatedSensors: ControlRelatedSensor[];
+  recommendedSection: TabId;
+  autoTriggered: boolean;
+}
+
+export type AutomatedControlPhase = "detected" | "executing" | "resolved" | "attention";
+
+export interface AutomatedControlResponse {
+  id: string;
+  abnormalityKey: string;
+  actionTypes: ControlActionType[];
+  targetLabel: string;
+  targetZoneId?: string;
+  recommendedSection: TabId;
+  priority: ControlActionPriority;
+  headline: string;
+  statusLabel: string;
+  machineryLabel: string;
+  message: string;
+  phase: AutomatedControlPhase;
+  startedAt: string;
+  updatedAt: string;
+  autoTriggered: boolean;
 }
