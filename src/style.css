@@ -836,6 +836,15 @@ code,
   gap: 12px;
 }
 
+.agent-tab,
+.agent-side-stack,
+.tradeoff-decision-list,
+.agent-log-panel,
+.agent-confidence-panel {
+  display: grid;
+  gap: 12px;
+}
+
 .crop-kpi-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -854,6 +863,12 @@ code,
   gap: 12px;
 }
 
+.agent-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .resource-main-row {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
@@ -864,6 +879,13 @@ code,
 .risk-main-row {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.agent-detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
   gap: 12px;
   align-items: start;
 }
@@ -884,6 +906,170 @@ code,
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.tradeoff-decision {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--chrome);
+  background: var(--bg-1);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.tradeoff-decision__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tradeoff-decision__title,
+.mission-memory-row__text,
+.agent-log-toolbar {
+  margin: 0;
+  color: var(--text-0);
+}
+
+.tradeoff-decision__title {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tradeoff-decision__summary,
+.mission-memory-row__tags {
+  margin: 4px 0 0;
+  color: var(--text-1);
+}
+
+.tradeoff-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tradeoff-option {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--chrome);
+  border-radius: 4px;
+  background: var(--bg-2);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tradeoff-option.is-selected {
+  border-color: var(--aero-blue);
+  box-shadow: inset 0 0 0 1px rgba(74, 127, 193, 0.35);
+}
+
+.tradeoff-option__head,
+.agent-log-toolbar,
+.mission-memory-row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tradeoff-option__label,
+.agent-auth {
+  color: var(--text-0);
+}
+
+.tradeoff-option__body {
+  display: grid;
+  gap: 8px;
+}
+
+.tradeoff-option__body p,
+.tradeoff-option__foot {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.tradeoff-option__tag {
+  color: var(--text-2);
+  font-family: var(--font-data);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.agent-log-toolbar {
+  font-family: var(--font-data);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.agent-log-scroll {
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.mission-memory-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mission-memory-row {
+  border: 1px solid var(--chrome);
+  background: var(--bg-1);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.mission-memory-row__sol {
+  flex: 0 0 48px;
+  color: var(--mars-orange);
+  font-size: 9px;
+  text-align: right;
+}
+
+.mission-memory-row__body {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-confidence-note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 10px;
+}
+
+.agent-confidence-value--nom {
+  color: var(--nom);
+}
+
+.agent-confidence-value--cau {
+  color: var(--cau);
+}
+
+.agent-confidence-value--abt {
+  color: var(--abt);
+}
+
+.agent-auth {
+  font-size: 10px;
+}
+
+.agent-auth--auto-approved {
+  color: var(--nom);
+}
+
+.agent-auth--crew-review {
+  color: var(--cau);
+}
+
+.agent-auth--crew-required {
+  color: var(--abt);
 }
 
 .failure-realloc-col {
@@ -1896,6 +2082,7 @@ code,
   .crop-stage-gauges,
   .resource-kpi-row,
   .risk-kpi-row,
+  .agent-kpi-row,
   .failure-realloc-grid,
   .failure-impact-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1906,6 +2093,11 @@ code,
   }
 
   .risk-main-row {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-detail-row,
+  .tradeoff-option-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1996,6 +2188,7 @@ code,
   .crop-detail-row,
   .resource-kpi-row,
   .risk-kpi-row,
+  .agent-kpi-row,
   .failure-realloc-grid,
   .failure-impact-grid,
   .scenario-sim__compare {

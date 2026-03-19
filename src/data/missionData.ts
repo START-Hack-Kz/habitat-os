@@ -6,6 +6,7 @@ import frontendHandoffRaw from "../../docs/frontend-handoff.md?raw";
 import mvpScopeRaw from "../../docs/mvp-scope.md?raw";
 import scenarioSchemaRaw from "../../shared/schemas/scenarioInput.schema.ts?raw";
 import type {
+  AgentMetric,
   CropData,
   CropDependencyRow,
   CropMetric,
@@ -32,10 +33,12 @@ import type {
   StatusTone,
   TabDefinition,
   TimelineEvent,
+  TradeoffDecision,
   Tradeoff,
   WaterAllocItem,
   NutrientRow,
   ChatReply,
+  ConfidenceRow,
 } from "../types";
 
 type CropProfile = (typeof cropProfilesExample)[number];
@@ -712,6 +715,138 @@ const failureImpact: FailureImpactColumn[] = [
   },
 ];
 
+const agentMetrics: AgentMetric[] = [
+  {
+    id: "decisions",
+    label: "Decisions",
+    value: "847",
+    sub: "Historical planner + AI actions",
+    progress: 84,
+    progressColor: "var(--aero-blue)",
+  },
+  {
+    id: "overrides",
+    label: "Crew Overrides",
+    value: "12",
+    sub: "Manual interventions tracked",
+    progress: 24,
+    progressColor: "var(--cau)",
+    level: "CAU",
+  },
+  {
+    id: "resolved",
+    label: "Tradeoffs Resolved",
+    value: "34",
+    sub: "Active reasoning outcomes",
+    progress: 68,
+    progressColor: "var(--nom)",
+  },
+  {
+    id: "latency",
+    label: "Mean Latency",
+    value: "1.4s",
+    sub: "Decision turnaround",
+    progress: 72,
+    progressColor: "var(--nom)",
+    level: "NOM",
+  },
+];
+
+const tradeoffDecisions: TradeoffDecision[] = [
+  {
+    id: "decision-water",
+    title: "Water Reallocation",
+    status: "CAU",
+    summary:
+      "Redirecting water toward potato and beans preserves calories and protein, but it reduces fast-turn micronutrient buffers.",
+    options: [
+      {
+        id: "decision-water-a",
+        label: "Protect Calories",
+        pros: "Maintains potato and bean output under recycler loss.",
+        cons: "Lettuce and radish micronutrient output declines.",
+        confidencePct: 84,
+        confidenceLevel: "NOM",
+        note: "Best runway extension against current water loss.",
+      },
+      {
+        id: "decision-water-b",
+        label: "Preserve Variety",
+        pros: "Balances micronutrients across more zones.",
+        cons: "Shortens crew caloric runway during the active scenario.",
+        confidencePct: 63,
+        confidenceLevel: "CAU",
+        note: "Lower resilience if recycler efficiency drops again.",
+      },
+    ],
+  },
+  {
+    id: "decision-lighting",
+    title: "Lighting Compression",
+    status: "CAU",
+    summary:
+      "Reducing PAR in Zone-A lowers evapotranspiration and extends water runway, but canopy recovery slows.",
+    options: [
+      {
+        id: "decision-lighting-a",
+        label: "PAR Trim",
+        pros: "Cuts water demand without collapsing the canopy.",
+        cons: "Slows lettuce recovery and reduces vitamin output.",
+        confidencePct: 71,
+        confidenceLevel: "CAU",
+        note: "Recommended while energy remains stable.",
+      },
+      {
+        id: "decision-lighting-b",
+        label: "Hold Spectrum",
+        pros: "Protects growth velocity and visual recovery.",
+        cons: "Consumes water faster and increases thermal load.",
+        confidencePct: 48,
+        confidenceLevel: "ABT",
+        note: "Not preferred under the current failure state.",
+      },
+    ],
+  },
+];
+
+const confidenceRows: ConfidenceRow[] = [
+  {
+    id: "conf-1",
+    recommendation: "Water reallocation to potato + beans",
+    confidencePct: 84,
+    confidenceLevel: "NOM",
+    authorization: "AUTO-APPROVED",
+  },
+  {
+    id: "conf-2",
+    recommendation: "Zone-A PAR reduction",
+    confidencePct: 71,
+    confidenceLevel: "CAU",
+    authorization: "CREW REVIEW",
+  },
+  {
+    id: "conf-3",
+    recommendation: "Reserve loop pressure clamp",
+    confidencePct: 66,
+    confidenceLevel: "CAU",
+    authorization: "CREW REVIEW",
+  },
+  {
+    id: "conf-4",
+    recommendation: "Micronutrient supplementation swap",
+    confidencePct: 59,
+    confidenceLevel: "CAU",
+    authorization: "CREW REVIEW",
+  },
+  {
+    id: "conf-5",
+    recommendation: "Full canopy sacrifice protocol",
+    confidencePct: 38,
+    confidenceLevel: "ABT",
+    authorization: "CREW REQUIRED",
+  },
+];
+
 const timeline: TimelineEvent[] = [
   ...mission.eventLog.map((event) => ({
     id: event.eventId,
@@ -937,6 +1072,9 @@ export const missionData: MissionDataBundle = {
   emergencyLog,
   scenarioSimulations,
   failureImpact,
+  agentMetrics,
+  tradeoffDecisions,
+  confidenceRows,
   repoSignals: {
     panelCount,
     endpointCount,
@@ -945,6 +1083,7 @@ export const missionData: MissionDataBundle = {
 };
 
 export { chatReplies };
+export { confidenceRows };
 export { crops };
 export { cropDependencies };
 export { cropMetrics };
@@ -956,6 +1095,7 @@ export { fragility };
 export { fullAgentLog };
 export { failureImpact };
 export { emergencyLog };
+export { agentMetrics };
 export const overviewGridCells = missionData.ghCells;
 export const { overviewAlert } = missionData;
 export { overviewLog };
@@ -975,6 +1115,7 @@ export { scenarioSimulations };
 export { scenarios };
 export const missionTabs = missionData.tabs;
 export { timeline };
+export { tradeoffDecisions };
 export { tradeoffs };
 export { waterAlloc };
 

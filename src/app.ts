@@ -1,5 +1,6 @@
 import {
-  chatReplies,
+  agentMetrics,
+  confidenceRows,
   crops,
   cropDependencies,
   cropMetrics,
@@ -29,11 +30,13 @@ import {
   scenarioSimulations,
   scenarios,
   timeline,
-  tradeoffs,
+  tradeoffDecisions,
   waterAlloc,
 } from "./data/missionData";
 import type {
+  AgentMetric,
   ChatReply,
+  ConfidenceRow,
   CropData,
   CropMetric,
   CropDependencyRow,
@@ -77,6 +80,7 @@ export function renderApp(root: HTMLDivElement): void {
   let selectedCropId = crops.find((crop) => crop.healthLevel !== "NOM")?.id ?? crops[0]?.id ?? "";
   let selectedScenarioId = scenarioSimulations[0]?.id ?? "";
   let expandedEmergencyId = emergencyLog[0]?.id ?? "";
+  let selectedTradeoffOptionId = tradeoffDecisions[0]?.options[0]?.id ?? "";
 
   const renderPage = (): string => {
     switch (activeTab) {
@@ -91,7 +95,7 @@ export function renderApp(root: HTMLDivElement): void {
       case "risk":
         return renderRisk(selectedScenarioId, expandedEmergencyId);
       case "agent":
-        return renderAgent();
+        return renderAgent(selectedTradeoffOptionId);
       default:
         return renderOverview(false);
     }
@@ -166,6 +170,7 @@ export function renderApp(root: HTMLDivElement): void {
     const cropCard = target.closest<HTMLElement>("[data-crop-select]");
     const emergencyToggle = target.closest<HTMLElement>("[data-emergency-toggle]");
     const scenarioToggle = target.closest<HTMLElement>("[data-scenario-sim]");
+    const tradeoffToggle = target.closest<HTMLElement>("[data-tradeoff-option]");
 
     if (cropCard) {
       const nextCropId = cropCard.dataset.cropSelect;
@@ -189,6 +194,17 @@ export function renderApp(root: HTMLDivElement): void {
       const nextScenarioId = scenarioToggle.dataset.scenarioSim ?? "";
       selectedScenarioId = nextScenarioId;
       draw();
+      return;
+    }
+
+    if (tradeoffToggle) {
+      const nextTradeoffOptionId = tradeoffToggle.dataset.tradeoffOption ?? "";
+
+      if (nextTradeoffOptionId) {
+        selectedTradeoffOptionId = nextTradeoffOptionId;
+        draw();
+      }
+
       return;
     }
 
@@ -741,38 +757,68 @@ function renderRisk(selectedScenarioId: string, expandedEmergencyId: string): st
   `;
 }
 
-function renderAgent(): string {
+function renderAgent(selectedTradeoffOptionId: string): string {
   return `
-    <section class="content-grid">
+    <section class="agent-tab">
+      <div class="agent-kpi-row">
+        ${agentMetrics.map((item) => renderAgentMetric(item)).join("")}
+      </div>
+
       ${renderPanel({
-        title: "Agent Log",
+        title: "Tradeoff Reasoning",
         dotColor: "var(--cau)",
         children: `
-          <div class="ui-log-list">
-            ${fullAgentLog.map((item) => renderAgentLog(item)).join("")}
+          <div class="tradeoff-decision-list">
+            ${tradeoffDecisions
+              .map((item) => renderTradeoffDecision(item, selectedTradeoffOptionId))
+              .join("")}
           </div>
         `,
       })}
 
-      ${renderPanel({
-        title: "Tradeoffs",
-        dotColor: "var(--nom)",
-        children: `
-          <div class="ui-notice-stack">
-            ${tradeoffs.map((item) => renderTradeoff(item)).join("")}
-          </div>
-        `,
-      })}
+      <div class="agent-detail-row">
+        ${renderPanel({
+          title: "Full Decision Log",
+          dotColor: "var(--nom)",
+          children: `
+            <div class="agent-log-panel">
+              <div class="agent-log-toolbar">
+                <span class="mono">Filter + Export</span>
+                <span class="mono">7 entries</span>
+              </div>
+              <div class="agent-log-scroll">
+                ${fullAgentLog.map((item) => renderAgentLog(item)).join("")}
+              </div>
+            </div>
+          `,
+        })}
 
-      ${renderPanel({
-        title: "Chat Replies",
-        dotColor: "var(--mars-orange)",
-        children: `
-          <div class="ui-chat-list">
-            ${chatReplies.map((item) => renderChatLine(item)).join("")}
-          </div>
-        `,
-      })}
+        <div class="agent-side-stack">
+          ${renderPanel({
+            title: "Mission Memory",
+            dotColor: "var(--mars-orange)",
+            children: `
+              <div class="mission-memory-list">
+                ${missionMemory.map((item) => renderMissionMemoryRow(item)).join("")}
+              </div>
+            `,
+          })}
+
+          ${renderPanel({
+            title: "Confidence Table",
+            dotColor: "var(--aero-blue)",
+            children: `
+              <div class="agent-confidence-panel">
+                <p class="agent-confidence-note"><em>Confidence values combine planner stability, scenario severity, and AI explanation consistency.</em></p>
+                ${renderDataTable({
+                  columns: ["Recommendation", "Confidence", "Authorization"],
+                  rows: confidenceRows.map((item) => renderConfidenceRow(item)),
+                })}
+              </div>
+            `,
+          })}
+        </div>
+      </div>
     </section>
   `;
 }
@@ -828,6 +874,17 @@ function renderResourceMetric(item: {
 }
 
 function renderRiskMetric(item: RiskMetric): string {
+  return renderKpiTile({
+    label: item.label,
+    value: item.value,
+    sub: item.sub,
+    level: item.level,
+    progress: item.progress,
+    progressColor: item.progressColor,
+  });
+}
+
+function renderAgentMetric(item: AgentMetric): string {
   return renderKpiTile({
     label: item.label,
     value: item.value,
@@ -945,6 +1002,62 @@ function renderFailureReallocColumn(column: FailureReallocColumn): string {
   `;
 }
 
+function renderTradeoffDecision(
+  item: {
+    id: string;
+    title: string;
+    status: StatusTone;
+    summary: string;
+    options: Array<{
+      id: string;
+      label: string;
+      pros: string;
+      cons: string;
+      confidencePct: number;
+      confidenceLevel: StatusTone;
+      note: string;
+    }>;
+  },
+  selectedTradeoffOptionId: string,
+): string {
+  return `
+    <article class="tradeoff-decision">
+      <div class="tradeoff-decision__head">
+        <div>
+          <p class="tradeoff-decision__title">${item.title}</p>
+          <p class="tradeoff-decision__summary">${item.summary}</p>
+        </div>
+        ${renderStatusBadge(item.status, item.status)}
+      </div>
+      <div class="tradeoff-option-grid">
+        ${item.options
+          .map(
+            (option) => `
+              <button
+                type="button"
+                class="tradeoff-option ${option.id === selectedTradeoffOptionId ? "is-selected" : ""}"
+                data-tradeoff-option="${option.id}"
+              >
+                <div class="tradeoff-option__head">
+                  <span class="tradeoff-option__label">${option.label}</span>
+                  ${renderConfPill(`${option.confidencePct}%`, option.confidenceLevel)}
+                </div>
+                <div class="tradeoff-option__body">
+                  <p><span class="tradeoff-option__tag">Pros</span> ${option.pros}</p>
+                  <p><span class="tradeoff-option__tag">Cons</span> ${option.cons}</p>
+                </div>
+                <div class="tradeoff-option__foot">
+                  <span class="mono">${option.note}</span>
+                </div>
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
 function renderEmergencyEntry(item: EmergencyEntry, isExpanded: boolean): string {
   return `
     <div class="risk-emergency risk-emergency--${item.type}">
@@ -994,6 +1107,26 @@ function renderFailureImpactColumn(column: FailureImpactColumn): string {
       </div>
     </div>
   `;
+}
+
+function renderMissionMemoryRow(item: MissionMemoryItem): string {
+  return `
+    <div class="mission-memory-row">
+      <span class="mission-memory-row__sol mono">${item.sol}</span>
+      <div class="mission-memory-row__body">
+        <p class="mission-memory-row__text">${item.text}</p>
+        <p class="mission-memory-row__tags mono">${item.tags.join(" | ")}</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderConfidenceRow(item: ConfidenceRow): string[] {
+  return [
+    item.recommendation,
+    `<span class="agent-confidence-value agent-confidence-value--${item.confidenceLevel.toLowerCase()}">${item.confidencePct}%</span>`,
+    `<span class="agent-auth agent-auth--${item.authorization.toLowerCase().replaceAll(" ", "-")}">${item.authorization}</span>`,
+  ];
 }
 
 function renderOverviewEnvTile(item: EnvParam): string {
@@ -1160,3 +1293,5 @@ function getNoticeLevel(level: StatusTone): "ok" | "warn" | "crit" {
 void renderRiskLegacy;
 void renderEnvKpi;
 void renderCropCard;
+void renderTradeoff;
+void renderChatLine;

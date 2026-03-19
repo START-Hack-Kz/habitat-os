@@ -234,6 +234,42 @@ export interface FailureImpactColumn {
   }>;
 }
 
+export interface AgentMetric {
+  id: string;
+  label: string;
+  value: string;
+  sub: string;
+  progress: number;
+  progressColor: string;
+  level?: StatusTone;
+}
+
+export interface TradeoffOption {
+  id: string;
+  label: string;
+  pros: string;
+  cons: string;
+  confidencePct: number;
+  confidenceLevel: StatusTone;
+  note: string;
+}
+
+export interface TradeoffDecision {
+  id: string;
+  title: string;
+  status: StatusTone;
+  summary: string;
+  options: TradeoffOption[];
+}
+
+export interface ConfidenceRow {
+  id: string;
+  recommendation: string;
+  confidencePct: number;
+  confidenceLevel: StatusTone;
+  authorization: "AUTO-APPROVED" | "CREW REVIEW" | "CREW REQUIRED";
+}
+
 export interface TabDefinition {
   id: TabId;
   label: string;
@@ -298,6 +334,9 @@ export interface MissionDataBundle {
   emergencyLog: EmergencyEntry[];
   scenarioSimulations: ScenarioSimulation[];
   failureImpact: FailureImpactColumn[];
+  agentMetrics: AgentMetric[];
+  tradeoffDecisions: TradeoffDecision[];
+  confidenceRows: ConfidenceRow[];
   repoSignals: {
     panelCount: number;
     endpointCount: number;
