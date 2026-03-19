@@ -59,6 +59,13 @@ export function applySimulationTweak(
             override.electricalConductivity ?? zone.sensors.electricalConductivity,
           soilMoisture: override.soilMoisture ?? zone.sensors.soilMoisture,
         },
+        stress: {
+          active: false,
+          type: "none",
+          severity: "none",
+          boltingRisk: false,
+          symptoms: [],
+        },
       };
     });
   }

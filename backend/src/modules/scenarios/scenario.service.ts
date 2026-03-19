@@ -42,9 +42,6 @@ type ScenarioSeverityRule = {
   photoperiodDelta?: number;
   temperatureDelta?: number;
   statusOverride?: CropZoneStatus;
-  collateralSoilMoistureDelta?: number;
-  collateralLightParDelta?: number;
-  collateralPhotoperiodDelta?: number;
 };
 
 const WATER_RULES: Record<FailureScenarioSeverity, ScenarioSeverityRule> = {
@@ -184,9 +181,6 @@ const SINGLE_ZONE_CONTROL_RULES: Record<FailureScenarioSeverity, ScenarioSeverit
     lightParFactor: 0.62,
     photoperiodDelta: -3,
     temperatureDelta: 1.5,
-    collateralSoilMoistureDelta: -4,
-    collateralLightParDelta: -12,
-    collateralPhotoperiodDelta: -0.3,
   },
   moderate: {
     cropImpacts: {
@@ -204,9 +198,6 @@ const SINGLE_ZONE_CONTROL_RULES: Record<FailureScenarioSeverity, ScenarioSeverit
     photoperiodDelta: -7,
     temperatureDelta: 3,
     statusOverride: "critical",
-    collateralSoilMoistureDelta: -8,
-    collateralLightParDelta: -24,
-    collateralPhotoperiodDelta: -0.6,
   },
   critical: {
     cropImpacts: {
@@ -224,9 +215,6 @@ const SINGLE_ZONE_CONTROL_RULES: Record<FailureScenarioSeverity, ScenarioSeverit
     photoperiodDelta: -12,
     temperatureDelta: 4.5,
     statusOverride: "offline",
-    collateralSoilMoistureDelta: -12,
-    collateralLightParDelta: -42,
-    collateralPhotoperiodDelta: -1,
   },
 };
 
@@ -480,37 +468,6 @@ function applyScenarioEffects(input: {
 
   state.zones = state.zones.map((zone) => {
     if (!affectedZones.has(zone.zoneId)) {
-      if (scenarioType === "single_zone_control_failure") {
-        return {
-          ...zone,
-          sensors: {
-            ...zone.sensors,
-            soilMoisture: roundToSingleDecimal(
-              clamp(
-                zone.sensors.soilMoisture + (severityRule.collateralSoilMoistureDelta ?? 0),
-                0,
-                100,
-              ),
-            ),
-            lightPAR: roundToSingleDecimal(
-              clamp(
-                zone.sensors.lightPAR + (severityRule.collateralLightParDelta ?? 0),
-                0,
-                1200,
-              ),
-            ),
-            photoperiodHours: roundToSingleDecimal(
-              clamp(
-                zone.sensors.photoperiodHours +
-                  (severityRule.collateralPhotoperiodDelta ?? 0),
-                0,
-                24,
-              ),
-            ),
-          },
-        };
-      }
-
       return zone;
     }
 
