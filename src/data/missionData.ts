@@ -1206,7 +1206,7 @@ function countMatches(source: string, pattern: RegExp): number {
 }
 
 function getScenarioTypes(source: string): string[] {
-  const match = source.match(/export type ScenarioType = ([^;]+);/);
+  const match = source.match(/export type ScenarioType = ([\s\S]+?);/);
   if (!match) {
     return [];
   }

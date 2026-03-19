@@ -11,3 +11,8 @@ amplifyconfiguration*
 
 # AWS credential/config files if copied into project by mistake
 .aws/
+node_modules
+
+# AI service
+ai_service/.env
+ai_service/.venv/

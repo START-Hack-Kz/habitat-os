@@ -25,6 +25,18 @@ export const scenarioInjectRequestSchema = z
     affectedZones: z.array(z.string().trim().min(1)).min(1).max(4).optional(),
     customOverrides: manualTweakParamsSchema.partial().optional(),
   })
+  .superRefine((value, ctx) => {
+    if (
+      value.scenarioType === "single_zone_control_failure" &&
+      value.affectedZones?.length !== 1
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "single_zone_control_failure requires exactly one affected zone",
+        path: ["affectedZones"],
+      });
+    }
+  })
   .strict();
 
 export const simulationResetRequestSchema = z.object({}).strict();

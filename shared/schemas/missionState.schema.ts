@@ -6,7 +6,11 @@ export type CropType = "lettuce" | "potato" | "beans" | "radish";
 export type ZoneStatus = "healthy" | "stressed" | "critical" | "harvesting" | "replanting" | "offline";
 export type StressType = "none" | "heat" | "cold" | "water_deficit" | "nitrogen_deficiency" | "light_deficit" | "energy_shortage" | "salinity";
 export type StressSeverity = "none" | "low" | "moderate" | "high" | "critical";
-export type ScenarioType = "water_recycling_decline" | "energy_budget_reduction" | "temperature_control_failure";
+export type ScenarioType =
+  | "water_recycling_decline"
+  | "energy_budget_reduction"
+  | "temperature_control_failure"
+  | "single_zone_control_failure";
 export type ScenarioSeverity = "mild" | "moderate" | "critical";
 export type EventType = "info" | "warning" | "critical" | "ai_action" | "scenario_injected" | "harvest" | "replant";
 export type NutritionTrend = "improving" | "stable" | "declining";

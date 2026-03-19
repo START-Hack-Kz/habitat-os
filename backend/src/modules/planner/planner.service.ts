@@ -50,6 +50,24 @@ function roundToSingleDecimal(value: number): number {
 }
 
 function shouldEnterNutritionPreservationMode(state: MissionState): boolean {
+  const malfunctionZoneId =
+    state.activeScenario?.scenarioType === "single_zone_control_failure"
+      ? state.activeScenario.affectedZones[0]
+      : null;
+  const malfunctionZone = malfunctionZoneId
+    ? state.zones.find((zone) => zone.zoneId === malfunctionZoneId)
+    : undefined;
+
+  if (
+    state.activeScenario?.scenarioType === "single_zone_control_failure" &&
+    malfunctionZone &&
+    (state.activeScenario.severity !== "mild" ||
+      malfunctionZone.status === "critical" ||
+      malfunctionZone.status === "offline")
+  ) {
+    return true;
+  }
+
   return (
     state.nutrition.nutritionalCoverageScore < NUTRITION_PRESERVATION_SCORE_THRESHOLD ||
     state.nutrition.daysSafe < NUTRITION_PRESERVATION_DAYS_THRESHOLD
@@ -228,6 +246,25 @@ function findHighestPriorityZone(state: MissionState): MissionState["zones"][num
 
 function findSecondaryPriorityZone(state: MissionState): MissionState["zones"][number] | undefined {
   return getPrioritySortedZones(state, false)[1];
+}
+
+function getScenarioZone(
+  state: MissionState,
+): MissionState["zones"][number] | undefined {
+  const zoneId = state.activeScenario?.affectedZones[0];
+
+  if (!zoneId) {
+    return undefined;
+  }
+
+  return state.zones.find((zone) => zone.zoneId === zoneId);
+}
+
+function getPriorityRecipients(
+  state: MissionState,
+  excludedZoneId: string,
+): MissionState["zones"] {
+  return getPrioritySortedZones(state, false).filter((zone) => zone.zoneId !== excludedZoneId);
 }
 
 function applyReallocateWaterAction(
@@ -479,6 +516,221 @@ function applyPauseZoneAction(
   };
 }
 
+function applyIsolateMalfunctionZoneAction(
+  state: MissionState,
+  malfunctionZoneId: string,
+  index: number,
+): PlannerAction | null {
+  const targetZone = state.zones.find((zone) => zone.zoneId === malfunctionZoneId);
+
+  if (!targetZone) {
+    return null;
+  }
+
+  state.zones = state.zones.map((zone) => {
+    if (zone.zoneId !== malfunctionZoneId) {
+      return zone;
+    }
+
+    return {
+      ...zone,
+      status: "offline",
+      projectedYieldKg: 0,
+      stress: {
+        ...zone.stress,
+        active: true,
+        type: zone.stress.type === "none" ? "energy_shortage" : zone.stress.type,
+        severity: "critical",
+      },
+      sensors: {
+        ...zone.sensors,
+        lightPAR: 0,
+        photoperiodHours: 0,
+        soilMoisture: roundToSingleDecimal(clamp(zone.sensors.soilMoisture - 20, 0, 100)),
+      },
+    };
+  });
+
+  const refreshed = state.zones.find((zone) => zone.zoneId === malfunctionZoneId);
+
+  return {
+    actionId: buildActionId(state, index),
+    actionType: "pause_zone",
+    urgency: "immediate",
+    targetZoneId: malfunctionZoneId,
+    description: `Isolate ${describeZone(targetZone)} from active production while shared support is redirected.`,
+    parameterChanges: {
+      [`${malfunctionZoneId}.status`]: refreshed?.status === "offline" ? 1 : 0,
+      [`${malfunctionZoneId}.sensors.lightPAR`]:
+        refreshed?.sensors.lightPAR ?? targetZone.sensors.lightPAR,
+      [`${malfunctionZoneId}.sensors.photoperiodHours`]:
+        refreshed?.sensors.photoperiodHours ?? targetZone.sensors.photoperiodHours,
+    },
+    nutritionImpact:
+      "Prevents a failing bay from consuming shared support needed by the remaining food crops.",
+    tradeoff: `${describeZone(targetZone)} is taken offline until manual repair restores local controls.`,
+  };
+}
+
+function applySingleZoneWaterRedistributionAction(
+  state: MissionState,
+  malfunctionZoneId: string,
+  index: number,
+): PlannerAction | null {
+  const donor = state.zones.find((zone) => zone.zoneId === malfunctionZoneId);
+  const recipients = getPriorityRecipients(state, malfunctionZoneId);
+  const primary = recipients[0];
+  const secondary = recipients[1];
+
+  if (!donor || donor.allocationPercent <= 0 || !primary) {
+    return null;
+  }
+
+  const primaryShift = roundToSingleDecimal(
+    Math.min(donor.allocationPercent, Math.max(8, donor.allocationPercent * 0.6)),
+  );
+  const primaryFreed = shiftAllocation(state, donor.zoneId, primary.zoneId, primaryShift);
+
+  let secondaryFreed = 0;
+  if (secondary) {
+    secondaryFreed = shiftAllocation(
+      state,
+      donor.zoneId,
+      secondary.zoneId,
+      Math.max(0, donor.allocationPercent - primaryFreed),
+    );
+  }
+
+  adjustZoneSensors({
+    state,
+    zoneId: primary.zoneId,
+    soilMoistureDelta: 14,
+  });
+  applyStressShift({
+    state,
+    zoneId: primary.zoneId,
+    direction: "down",
+    stressType: "water_deficit",
+  });
+
+  if (secondary && secondaryFreed > 0) {
+    adjustZoneSensors({
+      state,
+      zoneId: secondary.zoneId,
+      soilMoistureDelta: 9,
+    });
+    applyStressShift({
+      state,
+      zoneId: secondary.zoneId,
+      direction: "down",
+      stressType: "water_deficit",
+    });
+  }
+
+  const refreshedDonor = state.zones.find((zone) => zone.zoneId === donor.zoneId);
+  const refreshedPrimary = state.zones.find((zone) => zone.zoneId === primary.zoneId);
+  const refreshedSecondary = secondary
+    ? state.zones.find((zone) => zone.zoneId === secondary.zoneId)
+    : undefined;
+
+  const parameterChanges: Record<string, number> = {
+    [`${donor.zoneId}.allocationPercent`]:
+      refreshedDonor?.allocationPercent ?? donor.allocationPercent,
+    [`${primary.zoneId}.allocationPercent`]:
+      refreshedPrimary?.allocationPercent ?? primary.allocationPercent,
+  };
+
+  if (secondary && refreshedSecondary) {
+    parameterChanges[`${secondary.zoneId}.allocationPercent`] =
+      refreshedSecondary.allocationPercent;
+  }
+
+  return {
+    actionId: buildActionId(state, index),
+    actionType: "reallocate_water",
+    urgency: "immediate",
+    description: `Redirect shared irrigation from ${describeZone(donor)} toward ${describeZone(primary)}${secondary ? ` and ${describeZone(secondary)}` : ""}.`,
+    parameterChanges,
+    nutritionImpact:
+      "Preserves caloric and protein continuity by restoring moisture support in the surviving priority zones.",
+    tradeoff: `${describeZone(donor)} remains dry and unavailable until the control stack is repaired.`,
+  };
+}
+
+function applySingleZoneEnergyPrioritizationAction(
+  state: MissionState,
+  malfunctionZoneId: string,
+  index: number,
+): PlannerAction | null {
+  const recipients = getPriorityRecipients(state, malfunctionZoneId);
+  const primary = recipients[0];
+  const secondary = recipients[1];
+
+  if (!primary) {
+    return null;
+  }
+
+  adjustZoneSensors({
+    state,
+    zoneId: primary.zoneId,
+    lightParDelta: 36,
+    photoperiodDelta: 1.2,
+    temperatureDelta: -0.5,
+  });
+  applyStressShift({
+    state,
+    zoneId: primary.zoneId,
+    direction: "down",
+    stressType: "light_deficit",
+  });
+
+  if (secondary) {
+    adjustZoneSensors({
+      state,
+      zoneId: secondary.zoneId,
+      lightParDelta: 22,
+      photoperiodDelta: 0.8,
+    });
+    applyStressShift({
+      state,
+      zoneId: secondary.zoneId,
+      direction: "down",
+      stressType: "light_deficit",
+    });
+  }
+
+  const refreshedPrimary = state.zones.find((zone) => zone.zoneId === primary.zoneId);
+  const refreshedSecondary = secondary
+    ? state.zones.find((zone) => zone.zoneId === secondary.zoneId)
+    : undefined;
+
+  const parameterChanges: Record<string, number> = {
+    [`${primary.zoneId}.sensors.lightPAR`]:
+      refreshedPrimary?.sensors.lightPAR ?? primary.sensors.lightPAR,
+    [`${primary.zoneId}.sensors.photoperiodHours`]:
+      refreshedPrimary?.sensors.photoperiodHours ?? primary.sensors.photoperiodHours,
+  };
+
+  if (secondary && refreshedSecondary) {
+    parameterChanges[`${secondary.zoneId}.sensors.lightPAR`] =
+      refreshedSecondary.sensors.lightPAR;
+    parameterChanges[`${secondary.zoneId}.sensors.photoperiodHours`] =
+      refreshedSecondary.sensors.photoperiodHours;
+  }
+
+  return {
+    actionId: buildActionId(state, index),
+    actionType: "prioritize_zone",
+    urgency: "within_24h",
+    targetZoneId: primary.zoneId,
+    description: `Prioritize lighting and environmental support for ${describeZone(primary)}${secondary ? ` and ${describeZone(secondary)}` : ""}.`,
+    parameterChanges,
+    nutritionImpact:
+      "Redirects electrical support toward the remaining productive zones to recover photosynthesis and yield continuity.",
+    tradeoff: "The failed bay remains dark and unavailable while the remaining zones absorb the shared energy margin.",
+  };
+}
+
 function buildExplanation(
   before: MissionState,
   after: MissionState,
@@ -521,32 +773,62 @@ export function createNutritionPreservationExecution(
   afterState.status = "nutrition_preservation_mode";
   const actions: PlannerAction[] = [];
   const activeScenarioType = beforeSnapshot.activeScenario?.scenarioType ?? null;
+  const malfunctionZoneId =
+    activeScenarioType === "single_zone_control_failure"
+      ? beforeSnapshot.activeScenario?.affectedZones[0]
+      : undefined;
 
-  const primaryAction =
-    activeScenarioType === "energy_budget_reduction"
-      ? applyReduceLightingAction(afterState, 1)
-      : activeScenarioType === "temperature_control_failure"
-        ? applyAdjustTemperatureAction(afterState, 1)
-        : applyReallocateWaterAction(afterState, 1);
-
-  if (primaryAction) {
-    actions.push(primaryAction);
-  }
-
-  if (
-    beforeSnapshot.nutrition.nutritionalCoverageScore < 55 ||
-    beforeSnapshot.nutrition.daysSafe < 20
-  ) {
-    const lastResortAction = applyPauseZoneAction(afterState, actions.length + 1);
-    if (lastResortAction) {
-      actions.push(lastResortAction);
+  if (activeScenarioType === "single_zone_control_failure" && malfunctionZoneId) {
+    const isolateAction = applyIsolateMalfunctionZoneAction(afterState, malfunctionZoneId, 1);
+    if (isolateAction) {
+      actions.push(isolateAction);
     }
-  }
 
-  if (actions.length < 3 && activeScenarioType !== "water_recycling_decline") {
-    const waterAction = applyReallocateWaterAction(afterState, actions.length + 1);
+    const waterAction = applySingleZoneWaterRedistributionAction(
+      afterState,
+      malfunctionZoneId,
+      actions.length + 1,
+    );
     if (waterAction) {
       actions.push(waterAction);
+    }
+
+    const energyAction = applySingleZoneEnergyPrioritizationAction(
+      afterState,
+      malfunctionZoneId,
+      actions.length + 1,
+    );
+    if (energyAction) {
+      actions.push(energyAction);
+    }
+  } else {
+
+    const primaryAction =
+      activeScenarioType === "energy_budget_reduction"
+        ? applyReduceLightingAction(afterState, 1)
+        : activeScenarioType === "temperature_control_failure"
+          ? applyAdjustTemperatureAction(afterState, 1)
+          : applyReallocateWaterAction(afterState, 1);
+
+    if (primaryAction) {
+      actions.push(primaryAction);
+    }
+
+    if (
+      beforeSnapshot.nutrition.nutritionalCoverageScore < 55 ||
+      beforeSnapshot.nutrition.daysSafe < 20
+    ) {
+      const lastResortAction = applyPauseZoneAction(afterState, actions.length + 1);
+      if (lastResortAction) {
+        actions.push(lastResortAction);
+      }
+    }
+
+    if (actions.length < 3 && activeScenarioType !== "water_recycling_decline") {
+      const waterAction = applyReallocateWaterAction(afterState, actions.length + 1);
+      if (waterAction) {
+        actions.push(waterAction);
+      }
     }
   }
 

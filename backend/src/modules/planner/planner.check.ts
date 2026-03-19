@@ -137,6 +137,25 @@ function main(): void {
     "Temperature scenario did not reduce lettuce projected yield",
   );
 
+  const singleZoneFailure = assertScenarioDeterminism(
+    {
+      scenarioType: "single_zone_control_failure",
+      severity: "critical",
+      affectedZones: ["zone-C"],
+    },
+    "Single-zone control failure",
+  );
+  const failedZone = singleZoneFailure.missionState.zones.find((zone) => zone.zoneId === "zone-C");
+  assert(
+    failedZone?.status === "offline",
+    "Single-zone control failure did not isolate the affected zone",
+  );
+  assert(
+    singleZoneFailure.missionState.eventLog[0]?.message ===
+      "zone-C: CRITICAL: Single-zone control failure. Isolate the affected bay and immediately redirect water and energy to the surviving zones.",
+    "Single-zone control failure did not append the expected event log entry",
+  );
+
   const targetedWater = injectFromBaseline({
     scenarioType: "water_recycling_decline",
     severity: "moderate",
@@ -209,6 +228,32 @@ function main(): void {
     degradedExecution.afterSnapshot.nutrition.nutritionalCoverageScore >
       degradedExecution.beforeSnapshot.nutrition.nutritionalCoverageScore,
     "Planner execution did not improve the nutrition score",
+  );
+
+  resetMissionState();
+  injectScenario({
+    scenarioType: "single_zone_control_failure",
+    severity: "critical",
+    affectedZones: ["zone-C"],
+  });
+  const malfunctionExecution = getCurrentNutritionPreservationExecution();
+  assert(
+    malfunctionExecution.mode === "nutrition_preservation",
+    "Single-zone control failure should enter nutrition preservation mode",
+  );
+  assert(
+    malfunctionExecution.recommendedActions.some((action) => action.actionType === "reallocate_water"),
+    "Single-zone control failure should recommend water redistribution",
+  );
+  assert(
+    malfunctionExecution.recommendedActions.some(
+      (action) => action.actionType === "prioritize_zone" || action.actionType === "pause_zone",
+    ),
+    "Single-zone control failure should recommend isolating or prioritizing zones",
+  );
+  assert(
+    malfunctionExecution.afterSnapshot.zones.find((zone) => zone.zoneId === "zone-C")?.allocationPercent === 0,
+    "Planner did not remove shared allocation from the failed zone",
   );
 
   const storeBeforePlan = cloneMissionState(getMissionState());

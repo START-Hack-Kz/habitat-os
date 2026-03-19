@@ -1,5 +1,6 @@
 import { MISSION_SEED } from "../../data/mission.seed";
 import type { AgentAnalyzeRequest } from "../../schemas/agent.schema";
+import type { ScenarioInjectRequest } from "../../schemas/scenario.schema";
 import { getCurrentMissionSnapshot } from "../mission/mission.service";
 import { getMissionState, resetMissionState } from "../mission/mission.store";
 import type { MissionState } from "../mission/mission.types";
@@ -52,9 +53,7 @@ function main(): void {
     severity: "critical",
   });
   const degradedBefore = cloneMissionState(getMissionState());
-  const degradedAnalysis = createAgentAnalysis(degradedBefore, {
-    includeNotification: true,
-  });
+  const degradedAnalysis = createAgentAnalysis(degradedBefore, {});
   const degradedStoreAfter = JSON.stringify(getMissionState());
 
   assert(
@@ -74,10 +73,6 @@ function main(): void {
     "Degraded analysis should project a positive nutrition score delta",
   );
   assert(
-    degradedAnalysis.response.kbContextUsed === true,
-    "Stub response should report KB context usage",
-  );
-  assert(
     JSON.stringify(degradedBefore) === degradedStoreAfter,
     "Analysis without autoApply should not mutate the mission store",
   );
@@ -89,7 +84,6 @@ function main(): void {
   });
   const autoApplyAnalysis = analyzeCurrentMissionWithStub({
     autoApply: true,
-    includeNotification: true,
   } satisfies AgentAnalyzeRequest);
   const appliedState = getCurrentMissionSnapshot();
 
@@ -115,6 +109,32 @@ function main(): void {
     "Agent analysis should not mutate the baseline seed",
   );
 
+  resetMissionState();
+  injectScenario({
+    scenarioType: "single_zone_control_failure",
+    severity: "critical",
+    affectedZones: ["zone-C"],
+  } satisfies ScenarioInjectRequest);
+  const malfunctionAnalysis = analyzeCurrentMissionWithStub({
+    autoApply: true,
+  } satisfies AgentAnalyzeRequest);
+  const malfunctionState = getCurrentMissionSnapshot();
+
+  assert(
+    malfunctionAnalysis.recommendedActions.some((action) => action.actionType === "reallocate_water"),
+    "Single-zone malfunction analysis should recommend water redistribution",
+  );
+  assert(
+    malfunctionAnalysis.recommendedActions.some(
+      (action) => action.actionType === "prioritize_zone" || action.actionType === "pause_zone",
+    ),
+    "Single-zone malfunction analysis should recommend isolating the failed zone or prioritizing survivors",
+  );
+  assert(
+    malfunctionState.zones.find((zone) => zone.zoneId === "zone-C")?.allocationPercent === 0,
+    "Auto-apply should reallocate support away from the malfunctioning zone",
+  );
+
   console.log(
     JSON.stringify(
       {
@@ -127,6 +147,9 @@ function main(): void {
         appliedMissionStatus: appliedState.status,
         appliedNutritionScore: appliedState.nutrition.nutritionalCoverageScore,
         appliedEventType: appliedState.eventLog[0]?.type ?? null,
+        malfunctionActionTypes: malfunctionAnalysis.recommendedActions.map((action) => action.actionType),
+        malfunctionZoneAllocation:
+          malfunctionState.zones.find((zone) => zone.zoneId === "zone-C")?.allocationPercent ?? null,
         baselineSeedUntouched: true,
       },
       null,

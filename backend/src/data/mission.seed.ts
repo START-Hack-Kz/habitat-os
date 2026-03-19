@@ -80,7 +80,7 @@ const BASE_MISSION_SEED = {
       zoneId: "zone-A",
       cropType: "lettuce",
       areaM2: 40,
-      growthDay: 35,
+      growthDay: 19,
       growthCycleTotal: 35,
       growthProgressPercent: buildGrowthProgressPercent(19, 35),
       status: "healthy",

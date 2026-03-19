@@ -9,7 +9,6 @@ export const agentAnalysisFocusValues = [
 export const agentAnalyzeRequestSchema = z
   .object({
     autoApply: z.boolean().optional(),
-    includeNotification: z.boolean().optional(),
     focus: z.enum(agentAnalysisFocusValues).optional(),
   })
   .strict();

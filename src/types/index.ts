@@ -380,7 +380,8 @@ export type BackendStressSeverity =
 export type BackendScenarioType =
   | "water_recycling_decline"
   | "energy_budget_reduction"
-  | "temperature_control_failure";
+  | "temperature_control_failure"
+  | "single_zone_control_failure";
 export type BackendScenarioSeverity = "mild" | "moderate" | "critical";
 export type BackendEventLevel = "info" | "warning" | "critical";
 export type BackendEventType =
