@@ -1,15 +1,14 @@
 import { MISSION_SEED } from "../../data/mission.seed";
 import type { ScenarioInjectRequest } from "../../schemas/scenario.schema";
-import { resetMissionState, getMissionState, setMissionState } from "../mission/mission.store";
+import {
+  getCurrentMissionSnapshot,
+} from "../mission/mission.service";
+import { getMissionState, resetMissionState, setMissionState } from "../mission/mission.store";
 import type { MissionState } from "../mission/mission.types";
-import { getCurrentMissionSnapshot } from "../mission/mission.service";
+import { applyScenarioInjection, injectScenario } from "../scenarios/scenario.service";
 import {
-  applyScenarioInjection,
-  injectScenario,
-} from "../scenarios/scenario.service";
-import {
-  createNutritionPreservationPlan,
-  getCurrentNutritionPreservationPlan,
+  createNutritionPreservationExecution,
+  getCurrentNutritionPreservationExecution,
 } from "./planner.service";
 
 function cloneMissionState(state: MissionState): MissionState {
@@ -30,7 +29,7 @@ function injectFromBaseline(input: ScenarioInjectRequest) {
 function assertScenarioDeterminism(
   input: ScenarioInjectRequest,
   label: string,
-): MissionState {
+): ReturnType<typeof injectScenario> {
   const firstRun = injectFromBaseline(input);
   const secondRun = injectFromBaseline(input);
 
@@ -39,7 +38,7 @@ function assertScenarioDeterminism(
     `${label} scenario injection is not deterministic`,
   );
   assert(
-    firstRun.eventLog.length === MISSION_SEED.eventLog.length + 1,
+    firstRun.missionState.eventLog.length === MISSION_SEED.eventLog.length + 1,
     `${label} scenario did not append exactly one event log entry`,
   );
 
@@ -49,27 +48,29 @@ function assertScenarioDeterminism(
 function main(): void {
   const seedBefore = cloneMissionState(MISSION_SEED);
 
-  const waterInput: ScenarioInjectRequest = {
-    scenarioType: "water_recycling_decline",
-    severity: "critical",
-  };
-  const waterA = assertScenarioDeterminism(waterInput, "Water recycling");
+  const waterA = assertScenarioDeterminism(
+    {
+      scenarioType: "water_recycling_decline",
+      severity: "critical",
+    },
+    "Water recycling",
+  );
 
   assert(
-    waterA.resources.waterRecyclingEfficiencyPercent === 45,
+    waterA.missionState.resources.waterRecyclingEfficiency === 45,
     "Water recycling scenario did not set efficiency to 45%",
   );
-  const lettuceAfterWater = waterA.zones.find((zone) => zone.cropType === "lettuce");
+  const lettuceAfterWater = waterA.missionState.zones.find((zone) => zone.cropType === "lettuce");
   assert(
-    lettuceAfterWater?.stress.type === "water_stress",
-    "Water recycling scenario did not apply water stress to lettuce",
+    lettuceAfterWater?.stress.type === "water_deficit",
+    "Water recycling scenario did not apply water-deficit stress to lettuce",
   );
   assert(
     lettuceAfterWater !== undefined && lettuceAfterWater.projectedYieldKg < 160,
     "Water recycling scenario did not reduce lettuce projected yield",
   );
   assert(
-    waterA.eventLog[0]?.message ===
+    waterA.missionState.eventLog[0]?.message ===
       "CRITICAL: Water recycling at 45%. Severe water loss. Nutrition Preservation Mode recommended.",
     "Water recycling scenario did not append the expected event log entry",
   );
@@ -81,17 +82,20 @@ function main(): void {
     },
     "Energy budget reduction",
   );
-  const potatoAfterEnergy = energy.zones.find((zone) => zone.cropType === "potato");
+  const potatoAfterEnergy = energy.missionState.zones.find((zone) => zone.cropType === "potato");
   assert(
-    energy.resources.energyAvailableKwh === 180,
+    energy.missionState.resources.energyAvailableKwh === 180,
     "Energy scenario did not set energyAvailableKwh to 180",
   );
   assert(
-    potatoAfterEnergy?.stress.severity === "moderate",
-    "Energy scenario did not push the potato zone to moderate stress",
+    potatoAfterEnergy !== undefined &&
+      potatoAfterEnergy.stress.active &&
+      (potatoAfterEnergy.stress.type === "energy_shortage" ||
+        potatoAfterEnergy.stress.type === "light_deficit"),
+    "Energy scenario did not apply stress to the potato zone",
   );
   assert(
-    energy.eventLog[0]?.message ===
+    energy.missionState.eventLog[0]?.message ===
       "Energy deficit. LED intensity reduced. Potato zone entering moderate stress.",
     "Energy scenario did not append the expected event log entry",
   );
@@ -107,23 +111,24 @@ function main(): void {
     },
     "Temperature control failure",
   );
-  const lettuceAfterTemperature = temperature.zones.find(
+  const lettuceAfterTemperature = temperature.missionState.zones.find(
     (zone) => zone.cropType === "lettuce",
   );
-  const beansAfterTemperature = temperature.zones.find(
+  const beansAfterTemperature = temperature.missionState.zones.find(
     (zone) => zone.cropType === "beans",
   );
   assert(
-    lettuceAfterTemperature?.stress.type === "temperature_drift",
-    "Temperature scenario did not set the expected stress type",
+    lettuceAfterTemperature?.stress.type === "heat",
+    "Temperature scenario did not set the expected heat stress type",
   );
   assert(
     lettuceAfterTemperature?.stress.severity === "critical" &&
-      beansAfterTemperature?.stress.severity === "moderate",
+      beansAfterTemperature !== undefined &&
+      beansAfterTemperature.stress.severity !== "none",
     "Temperature scenario did not apply the expected crop-specific stress levels",
   );
   assert(
-    temperature.eventLog[0]?.message ===
+    temperature.missionState.eventLog[0]?.message ===
       "CRITICAL: Temperature at 32°C. Lettuce and potato critically stressed. Redirect resources to beans.",
     "Temperature scenario did not append the expected event log entry",
   );
@@ -135,20 +140,24 @@ function main(): void {
   const targetedWater = injectFromBaseline({
     scenarioType: "water_recycling_decline",
     severity: "moderate",
-    affectedZoneIds: ["zone-a", "zone-d"],
+    affectedZones: ["zone-A", "zone-D"],
   });
-  const targetedPotato = targetedWater.zones.find((zone) => zone.zoneId === "zone-b");
+  const targetedPotato = targetedWater.missionState.zones.find((zone) => zone.zoneId === "zone-B");
   assert(
     targetedPotato?.stress.severity === "none",
     "Targeted scenario injection unexpectedly changed an unaffected zone",
   );
 
   resetMissionState();
-  const normalPlan = getCurrentNutritionPreservationPlan();
-  assert(normalPlan.mode === "normal", "Healthy baseline should remain in normal mode");
+  const normalExecution = getCurrentNutritionPreservationExecution();
+  assert(normalExecution.mode === "normal", "Healthy baseline should remain in normal mode");
   assert(
-    normalPlan.recommendedActions.length === 0,
+    normalExecution.recommendedActions.length === 0,
     "Healthy baseline should not return planner actions",
+  );
+  assert(
+    normalExecution.plan.nutritionRiskDetected === false,
+    "Healthy baseline should not raise a nutrition risk",
   );
 
   const pureScenarioInput = cloneMissionState(MISSION_SEED);
@@ -162,7 +171,7 @@ function main(): void {
     "applyScenarioInjection unexpectedly mutated its source input",
   );
   assert(
-    pureScenarioOutput.resources.waterRecyclingEfficiencyPercent === 78,
+    pureScenarioOutput.resources.waterRecyclingEfficiency === 78,
     "Pure scenario helper did not apply the expected water override",
   );
 
@@ -171,9 +180,9 @@ function main(): void {
     scenarioType: "energy_budget_reduction",
     severity: "mild",
   });
-  const mildEnergyPlan = getCurrentNutritionPreservationPlan();
+  const mildEnergyExecution = getCurrentNutritionPreservationExecution();
   assert(
-    mildEnergyPlan.mode === "normal",
+    mildEnergyExecution.mode === "normal",
     "Mild energy degradation should stay in normal mode with current thresholds",
   );
 
@@ -182,24 +191,28 @@ function main(): void {
     scenarioType: "water_recycling_decline",
     severity: "critical",
   });
-  const degradedPlan = getCurrentNutritionPreservationPlan();
+  const degradedExecution = getCurrentNutritionPreservationExecution();
   assert(
-    degradedPlan.mode === "nutrition_preservation",
+    degradedExecution.mode === "nutrition_preservation",
     "Critical degraded state should enter nutrition preservation mode",
   );
   assert(
-    degradedPlan.recommendedActions.length >= 1 &&
-      degradedPlan.recommendedActions.length <= 3,
+    degradedExecution.recommendedActions.length >= 1 &&
+      degradedExecution.recommendedActions.length <= 3,
     "Planner must return between 1 and 3 actions in nutrition preservation mode",
   );
   assert(
-    typeof degradedPlan.nutritionForecast.before.nutritionalCoverageScore === "number" &&
-      typeof degradedPlan.nutritionForecast.after.nutritionalCoverageScore === "number",
-    "Planner nutrition forecast is structurally invalid",
+    degradedExecution.plan.nutritionRiskDetected,
+    "Degraded planner output should raise a nutrition risk",
+  );
+  assert(
+    degradedExecution.afterSnapshot.nutrition.nutritionalCoverageScore >
+      degradedExecution.beforeSnapshot.nutrition.nutritionalCoverageScore,
+    "Planner execution did not improve the nutrition score",
   );
 
   const storeBeforePlan = cloneMissionState(getMissionState());
-  const directPlan = createNutritionPreservationPlan(storeBeforePlan);
+  const directExecution = createNutritionPreservationExecution(storeBeforePlan);
   const storeAfterPlan = getMissionState();
   assert(
     JSON.stringify(storeBeforePlan) === JSON.stringify(storeAfterPlan),
@@ -217,18 +230,20 @@ function main(): void {
   console.log(
     JSON.stringify(
       {
-        waterScenarioStatus: waterA.status,
-        energyScenarioStatus: energy.status,
-        temperatureScenarioStatus: temperature.status,
+        waterScenarioStatus: waterA.missionState.status,
+        energyScenarioStatus: energy.missionState.status,
+        temperatureScenarioStatus: temperature.missionState.status,
         targetedWaterUnaffectedPotatoStress: targetedPotato?.stress.severity,
-        waterEventLogHead: waterA.eventLog[0]?.message,
-        normalPlannerMode: normalPlan.mode,
-        mildEnergyPlannerMode: mildEnergyPlan.mode,
-        degradedPlannerMode: degradedPlan.mode,
-        degradedPlannerActions: degradedPlan.recommendedActions.map((action) => action.type),
-        degradedNutritionBefore: degradedPlan.nutritionForecast.before,
-        degradedNutritionAfter: degradedPlan.nutritionForecast.after,
-        directPlanMode: directPlan.mode,
+        waterEventLogHead: waterA.missionState.eventLog[0]?.message,
+        normalPlannerMode: normalExecution.mode,
+        mildEnergyPlannerMode: mildEnergyExecution.mode,
+        degradedPlannerMode: degradedExecution.mode,
+        degradedPlannerActions: degradedExecution.recommendedActions.map(
+          (action) => action.actionType,
+        ),
+        degradedNutritionBefore: degradedExecution.beforeSnapshot.nutrition,
+        degradedNutritionAfter: degradedExecution.afterSnapshot.nutrition,
+        directPlanMode: directExecution.mode,
         baselineSnapshotStatus: baselineSnapshot.status,
         pureScenarioInputUntouched: true,
         seedStateUntouched: true,

@@ -1,53 +1,90 @@
-/**
- * nutrition.validate.ts
- * Quick validation script — run with: npx ts-node src/modules/nutrition/nutrition.validate.ts
- * Demonstrates the calculator against the seed state and a stressed state.
- */
-
 import { MISSION_SEED } from "../../data/mission.seed";
+import { buildMissionSnapshot } from "../mission/mission.service";
 import { calculateNutrition } from "./nutrition.calculator";
 
-// ── Case 1: nominal seed state ────────────────────────────────────────────────
+const nominalSnapshot = buildMissionSnapshot(MISSION_SEED);
 const nominal = calculateNutrition({
-  zones: MISSION_SEED.zones,
-  resources: MISSION_SEED.resources,
-  crewSize: MISSION_SEED.crewSize,
-  missionDurationDays: MISSION_SEED.missionDurationDays,
-  missionDay: MISSION_SEED.missionDay,
+  zones: nominalSnapshot.zones,
+  resources: nominalSnapshot.resources,
+  crewSize: nominalSnapshot.crewSize,
+  missionDurationTotal: nominalSnapshot.missionDurationTotal,
+  missionDay: nominalSnapshot.missionDay,
 });
 
 console.log("=== CASE 1: Nominal seed state ===");
 console.log(JSON.stringify(nominal, null, 2));
 
-// ── Case 2: water recycling failure (efficiency 45%) + lettuce critically stressed ──
-const failureZones = structuredClone(MISSION_SEED.zones).map((z: typeof MISSION_SEED.zones[number]) => {
-  if (z.cropType === "lettuce") {
-    return { ...z, stress: { ...z.stress, active: true, type: "water_stress" as const, severity: "critical" as const, summary: "Critical water stress" } };
+const failureState = structuredClone(MISSION_SEED);
+failureState.zones = failureState.zones.map((zone) => {
+  if (zone.zoneId === "zone-A") {
+    return {
+      ...zone,
+      sensors: {
+        ...zone.sensors,
+        temperature: 32,
+        humidity: 35,
+      },
+    };
   }
-  if (z.cropType === "potato") {
-    return { ...z, stress: { ...z.stress, active: true, type: "water_stress" as const, severity: "moderate" as const, summary: "Moderate water stress" } };
+
+  if (zone.zoneId === "zone-B") {
+    return {
+      ...zone,
+      sensors: {
+        ...zone.sensors,
+        soilMoisture: 15,
+      },
+    };
   }
-  return z;
+
+  return zone;
 });
+failureState.resources = {
+  ...failureState.resources,
+  waterRecyclingEfficiency: 45,
+};
 
-const failureResources = { ...MISSION_SEED.resources, waterRecyclingEfficiencyPercent: 45 };
-
+const failureSnapshot = buildMissionSnapshot(failureState);
 const failure = calculateNutrition({
-  zones: failureZones,
-  resources: failureResources,
-  crewSize: MISSION_SEED.crewSize,
-  missionDurationDays: MISSION_SEED.missionDurationDays,
-  missionDay: MISSION_SEED.missionDay,
+  zones: failureSnapshot.zones,
+  resources: failureSnapshot.resources,
+  crewSize: failureSnapshot.crewSize,
+  missionDurationTotal: failureSnapshot.missionDurationTotal,
+  missionDay: failureSnapshot.missionDay,
   previousScore: nominal.nutritionalCoverageScore,
 });
 
-console.log("\n=== CASE 2: Water recycling failure (45%) + lettuce critical + potato moderate ===");
+console.log("\n=== CASE 2: High heat on lettuce + low soil moisture on potato ===");
 console.log(JSON.stringify(failure, null, 2));
 
+console.log("\n=== DERIVED STATE ===");
+console.log(
+  JSON.stringify(
+    failureSnapshot.zones.map((zone) => ({
+      zoneId: zone.zoneId,
+      stress: zone.stress,
+      projectedYieldKg: zone.projectedYieldKg,
+    })),
+    null,
+    2,
+  ),
+);
+
 console.log("\n=== DELTA ===");
-console.log(`caloricCoverage:      ${nominal.caloricCoveragePercent}% → ${failure.caloricCoveragePercent}%`);
-console.log(`proteinCoverage:      ${nominal.proteinCoveragePercent}% → ${failure.proteinCoveragePercent}%`);
-console.log(`micronutrientAdequacy:${nominal.micronutrientAdequacyPercent}% → ${failure.micronutrientAdequacyPercent}%`);
-console.log(`coverageScore:        ${nominal.nutritionalCoverageScore} → ${failure.nutritionalCoverageScore}`);
-console.log(`daysSafe:             ${nominal.daysSafe} → ${failure.daysSafe}`);
-console.log(`trend:                ${failure.trend}`);
+console.log(
+  `caloricCoverage: ${nominal.caloricCoveragePercent}% -> ${failure.caloricCoveragePercent}%`,
+);
+console.log(
+  `proteinCoverage: ${nominal.proteinCoveragePercent}% -> ${failure.proteinCoveragePercent}%`,
+);
+console.log(
+  `vitaminA: ${nominal.vitaminA.coveragePercent}% -> ${failure.vitaminA.coveragePercent}%`,
+);
+console.log(
+  `potassium: ${nominal.potassium.coveragePercent}% -> ${failure.potassium.coveragePercent}%`,
+);
+console.log(
+  `coverageScore: ${nominal.nutritionalCoverageScore} -> ${failure.nutritionalCoverageScore}`,
+);
+console.log(`daysSafe: ${nominal.daysSafe} -> ${failure.daysSafe}`);
+console.log(`trend: ${failure.trend}`);

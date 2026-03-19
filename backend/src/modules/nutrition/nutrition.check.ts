@@ -1,22 +1,21 @@
 import { MISSION_SEED } from "../../data/mission.seed";
+import { buildMissionSnapshot } from "../mission/mission.service";
 import type {
+  MicronutrientStatus,
   MissionState,
   NutritionStatus,
-  StressSeverity,
 } from "../mission/mission.types";
 import { calculateNutrition } from "./nutrition.calculator";
 
-const REQUIRED_NUMERIC_FIELDS: Array<keyof NutritionStatus> = [
-  "dailyCaloriesProduced",
-  "dailyCaloriesTarget",
-  "caloricCoveragePercent",
-  "dailyProteinProducedG",
-  "dailyProteinTargetG",
-  "proteinCoveragePercent",
-  "micronutrientAdequacyPercent",
-  "nutritionalCoverageScore",
-  "daysSafe",
-];
+const MICRONUTRIENT_KEYS = [
+  "vitaminA",
+  "vitaminC",
+  "vitaminK",
+  "folate",
+  "iron",
+  "potassium",
+  "magnesium",
+] as const;
 
 function cloneMissionState(state: MissionState): MissionState {
   return structuredClone(state);
@@ -32,22 +31,61 @@ function calculateFromMissionState(
   missionState: MissionState,
   previousScore?: number,
 ): NutritionStatus {
+  const snapshot = buildMissionSnapshot(missionState);
+
   return calculateNutrition({
-    zones: missionState.zones,
-    resources: missionState.resources,
-    crewSize: missionState.crewSize,
-    missionDurationDays: missionState.missionDurationDays,
-    missionDay: missionState.missionDay,
+    zones: snapshot.zones,
+    resources: snapshot.resources,
+    crewSize: snapshot.crewSize,
+    missionDurationTotal: snapshot.missionDurationTotal,
+    missionDay: snapshot.missionDay,
     previousScore,
   });
 }
 
+function assertMicronutrientShape(status: MicronutrientStatus, label: string): void {
+  assert(Number.isFinite(status.produced), `${label}.produced must be finite`);
+  assert(Number.isFinite(status.target), `${label}.target must be finite`);
+  assert(
+    status.unit === "mg" || status.unit === "µg",
+    `${label}.unit must be mg or µg`,
+  );
+  assert(
+    status.coveragePercent >= 0 && status.coveragePercent <= 100,
+    `${label}.coveragePercent must stay within 0-100`,
+  );
+}
+
 function assertNutritionShape(result: NutritionStatus): void {
-  for (const field of REQUIRED_NUMERIC_FIELDS) {
-    assert(
-      typeof result[field] === "number" && Number.isFinite(result[field]),
-      `Expected numeric finite nutrition field: ${field}`,
-    );
+  assert(
+    Number.isFinite(result.dailyCaloriesProduced),
+    "dailyCaloriesProduced must be finite",
+  );
+  assert(
+    Number.isFinite(result.dailyCaloriesTarget),
+    "dailyCaloriesTarget must be finite",
+  );
+  assert(
+    Number.isFinite(result.caloricCoveragePercent),
+    "caloricCoveragePercent must be finite",
+  );
+  assert(Number.isFinite(result.dailyProteinG), "dailyProteinG must be finite");
+  assert(
+    Number.isFinite(result.dailyProteinTarget),
+    "dailyProteinTarget must be finite",
+  );
+  assert(
+    Number.isFinite(result.proteinCoveragePercent),
+    "proteinCoveragePercent must be finite",
+  );
+  assert(
+    Number.isFinite(result.nutritionalCoverageScore),
+    "nutritionalCoverageScore must be finite",
+  );
+  assert(Number.isFinite(result.daysSafe), "daysSafe must be finite");
+
+  for (const key of MICRONUTRIENT_KEYS) {
+    assertMicronutrientShape(result[key], key);
   }
 
   assert(
@@ -58,62 +96,21 @@ function assertNutritionShape(result: NutritionStatus): void {
   );
 }
 
-function assertOutputCoherence(result: NutritionStatus): void {
-  assert(result.dailyCaloriesProduced >= 0, "Calories must not be negative");
-  assert(result.dailyProteinProducedG >= 0, "Protein must not be negative");
-  assert(result.caloricCoveragePercent >= 0, "Caloric coverage must not be negative");
-  assert(result.proteinCoveragePercent >= 0, "Protein coverage must not be negative");
-  assert(
-    result.micronutrientAdequacyPercent >= 0 && result.micronutrientAdequacyPercent <= 100,
-    "Micronutrient adequacy must stay within 0-100",
-  );
-  assert(
-    result.nutritionalCoverageScore >= 0 && result.nutritionalCoverageScore <= 100,
-    "Nutrition score must stay within 0-100",
-  );
-  assert(result.daysSafe >= 0, "daysSafe must not be negative");
-}
-
-function setAllZoneStress(missionState: MissionState, severity: StressSeverity): MissionState {
-  const next = cloneMissionState(missionState);
-  next.zones = next.zones.map((zone) => ({
-    ...zone,
-    status: severity === "none" ? "healthy" : "critical",
-    stress: {
-      ...zone.stress,
-      active: severity !== "none",
-      type: severity === "none" ? "none" : "water_stress",
-      severity,
-      summary:
-        severity === "none"
-          ? "Stress cleared for validation case."
-          : `Validation case with ${severity} stress.`,
-    },
-  }));
-  return next;
-}
-
 function main(): void {
   const seedBefore = cloneMissionState(MISSION_SEED);
 
   const baseline = calculateFromMissionState(MISSION_SEED);
   const baselineAgain = calculateFromMissionState(MISSION_SEED);
-  const baselineTyped: NutritionStatus = baseline;
-  const baselineMatchesSeedNutrition =
-    JSON.stringify(baseline) === JSON.stringify(MISSION_SEED.nutrition);
 
-  assertNutritionShape(baselineTyped);
-  assertOutputCoherence(baselineTyped);
+  assertNutritionShape(baseline);
   assert(
-    baselineMatchesSeedNutrition,
+    JSON.stringify(baseline) === JSON.stringify(MISSION_SEED.nutrition),
     "Baseline calculator output does not match MISSION_SEED.nutrition",
   );
-
   assert(
     JSON.stringify(baseline) === JSON.stringify(baselineAgain),
     "Calculator is not deterministic for identical input",
   );
-
   assert(
     JSON.stringify(MISSION_SEED) === JSON.stringify(seedBefore),
     "Calculator mutated the mission seed state",
@@ -133,65 +130,106 @@ function main(): void {
       ? {
           ...zone,
           projectedYieldKg: zone.projectedYieldKg * 0.5,
-          allocationPercent: Math.max(0, zone.allocationPercent - 10),
         }
       : zone,
   );
-  const reducedYield = calculateFromMissionState(reducedYieldState);
+  const reducedYield = calculateNutrition({
+    zones: reducedYieldState.zones,
+    resources: reducedYieldState.resources,
+    crewSize: reducedYieldState.crewSize,
+    missionDurationTotal: reducedYieldState.missionDurationTotal,
+    missionDay: reducedYieldState.missionDay,
+    previousScore: baseline.nutritionalCoverageScore,
+  });
   assert(
-    reducedYield.nutritionalCoverageScore <= baseline.nutritionalCoverageScore,
-    "Reducing important zone yield/allocation unexpectedly improved nutrition score",
+    reducedYield.nutritionalCoverageScore < baseline.nutritionalCoverageScore,
+    "Reducing projected yield did not lower the nutrition score",
   );
   assert(
-    reducedYield.daysSafe <= baseline.daysSafe,
-    "Reducing important zone yield/allocation unexpectedly improved daysSafe",
+    reducedYield.daysSafe < baseline.daysSafe,
+    "Reducing projected yield did not lower daysSafe",
   );
 
-  const worsenedStressState = setAllZoneStress(MISSION_SEED, "high");
-  const worsenedStress = calculateFromMissionState(
-    worsenedStressState,
+  const heatStressState = cloneMissionState(MISSION_SEED);
+  heatStressState.zones = heatStressState.zones.map((zone) =>
+    zone.zoneId === "zone-A"
+      ? {
+          ...zone,
+          sensors: {
+            ...zone.sensors,
+            temperature: 32,
+            humidity: 35,
+          },
+        }
+      : zone,
+  );
+  const heatStressSnapshot = buildMissionSnapshot(heatStressState);
+  const heatStress = calculateFromMissionState(
+    heatStressState,
     baseline.nutritionalCoverageScore,
   );
+
   assert(
-    worsenedStress.nutritionalCoverageScore <= baseline.nutritionalCoverageScore,
-    "Worsening zone stress unexpectedly improved nutrition score",
+    heatStressSnapshot.zones[0].stress.type === "heat" &&
+      heatStressSnapshot.zones[0].stress.boltingRisk,
+    "Heat case did not derive lettuce heat stress with bolting risk",
   );
   assert(
-    worsenedStress.daysSafe <= baseline.daysSafe,
-    "Worsening zone stress unexpectedly improved daysSafe",
+    heatStressSnapshot.zones[0].projectedYieldKg < baselineClone.zones[0].projectedYieldKg,
+    "Heat case did not reduce projected lettuce yield",
+  );
+  assert(
+    heatStress.vitaminA.coveragePercent <= baseline.vitaminA.coveragePercent,
+    "Heat-stressed lettuce unexpectedly improved vitamin A coverage",
+  );
+  assert(
+    heatStress.nutritionalCoverageScore <= baseline.nutritionalCoverageScore,
+    "Heat-stressed lettuce unexpectedly improved nutrition score",
   );
 
-  const improvedHealthState = setAllZoneStress(MISSION_SEED, "none");
-  improvedHealthState.resources.waterRecyclingEfficiencyPercent = 95;
-  const improvedHealth = calculateFromMissionState(improvedHealthState);
-  assert(
-    improvedHealth.nutritionalCoverageScore >= baseline.nutritionalCoverageScore,
-    "Improving zone health/resources unexpectedly worsened nutrition score",
+  const waterDeficitState = cloneMissionState(MISSION_SEED);
+  waterDeficitState.zones = waterDeficitState.zones.map((zone) =>
+    zone.zoneId === "zone-B"
+      ? {
+          ...zone,
+          sensors: {
+            ...zone.sensors,
+            soilMoisture: 15,
+          },
+        }
+      : zone,
   );
-  assert(
-    improvedHealth.daysSafe >= baseline.daysSafe,
-    "Improving zone health/resources unexpectedly worsened daysSafe",
-  );
-
-  const extremeDegradationState = setAllZoneStress(MISSION_SEED, "critical");
-  extremeDegradationState.resources.waterRecyclingEfficiencyPercent = 10;
-  extremeDegradationState.zones = extremeDegradationState.zones.map((zone) => ({
-    ...zone,
-    status: "critical",
-    projectedYieldKg: zone.projectedYieldKg * 0.1,
-    allocationPercent: Math.max(1, Math.round(zone.allocationPercent * 0.25)),
-  }));
-  const extremeDegradation = calculateFromMissionState(
-    extremeDegradationState,
+  const waterDeficitSnapshot = buildMissionSnapshot(waterDeficitState);
+  const waterDeficit = calculateFromMissionState(
+    waterDeficitState,
     baseline.nutritionalCoverageScore,
   );
+
   assert(
-    extremeDegradation.nutritionalCoverageScore < baseline.nutritionalCoverageScore,
-    "Extreme degradation did not materially worsen the nutrition score",
+    waterDeficitSnapshot.zones[1].stress.type === "water_deficit",
+    "Low soil moisture did not derive water-deficit stress",
   );
   assert(
-    extremeDegradation.daysSafe < baseline.daysSafe,
-    "Extreme degradation did not materially worsen daysSafe",
+    waterDeficit.dailyCaloriesProduced < baseline.dailyCaloriesProduced,
+    "Water-deficit potato case did not reduce calories",
+  );
+  assert(
+    waterDeficit.potassium.coveragePercent <= baseline.potassium.coveragePercent,
+    "Water-deficit potato case unexpectedly improved potassium coverage",
+  );
+
+  const resourceOnlyState = cloneMissionState(MISSION_SEED);
+  resourceOnlyState.resources.waterRecyclingEfficiency = 40;
+  const resourceOnly = calculateNutrition({
+    zones: resourceOnlyState.zones,
+    resources: resourceOnlyState.resources,
+    crewSize: resourceOnlyState.crewSize,
+    missionDurationTotal: resourceOnlyState.missionDurationTotal,
+    missionDay: resourceOnlyState.missionDay,
+  });
+  assert(
+    resourceOnly.dailyCaloriesProduced === MISSION_SEED.nutrition.dailyCaloriesProduced,
+    "Raw nutrition calculation should depend on projectedYieldKg, not resource values alone",
   );
 
   console.log(
@@ -199,20 +237,18 @@ function main(): void {
       {
         baseline,
         reducedYield,
-        worsenedStress,
-        improvedHealth,
-        extremeDegradation,
+        heatStress,
+        waterDeficit,
         checks: {
           returnedNutritionStatusShape: true,
-          baselineReturnedCompleteResult: true,
           baselineMatchesSeedNutrition: true,
           deterministic: true,
           seedInputImmutable: true,
           clonedInputImmutable: true,
-          reducedYieldDidNotImprove: true,
-          worsenedStressDidNotImprove: true,
-          improvedHealthDidNotWorsen: true,
-          extremeDegradationWorsenedBaseline: true,
+          projectedYieldDrivesNutrition: true,
+          heatStressDegradesLettuceOutput: true,
+          lowSoilMoistureDegradesPotatoOutput: true,
+          rawCalculatorDependsOnProjectedYieldOnly: true,
         },
       },
       null,

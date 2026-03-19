@@ -54,19 +54,19 @@ export const SCENARIO_CATALOG: Record<FailureScenarioType, ScenarioDefinition> =
       mild: {
         label: "Mild",
         // [APPROX] — MCP says >85% is target; mild = just below threshold
-        parameterOverrides: { waterRecyclingEfficiencyPercent: 78 },
+        parameterOverrides: { waterRecyclingEfficiency: 78 },
         effectSummary: "Efficiency at 78%. Minor increase in daily water loss. Monitor reservoir trend.",
       },
       moderate: {
         label: "Moderate",
         // [APPROX] — meaningful degradation, rationing required
-        parameterOverrides: { waterRecyclingEfficiencyPercent: 65 },
+        parameterOverrides: { waterRecyclingEfficiency: 65 },
         effectSummary: "Efficiency at 65%. Irrigation rationing required. Lettuce zone at risk within days.",
       },
       critical: {
         label: "Critical",
         // [APPROX] — severe failure, immediate reallocation needed
-        parameterOverrides: { waterRecyclingEfficiencyPercent: 45 },
+        parameterOverrides: { waterRecyclingEfficiency: 45 },
         effectSummary:
           "Efficiency at 45%. Severe water loss. Immediate reallocation to caloric crops required. " +
           "Nutrition Preservation Mode recommended.",
@@ -94,20 +94,20 @@ export const SCENARIO_CATALOG: Record<FailureScenarioType, ScenarioDefinition> =
       mild: {
         label: "Mild",
         // [APPROX] — small reduction, manageable with schedule optimisation
-        parameterOverrides: { energyAvailableKwh: 260, energyDailyConsumptionKwh: 210 },
+        parameterOverrides: { energyAvailableKwh: 260, energyConsumptionKwhPerDay: 210 },
         effectSummary: "Energy reserve reduced. Lighting schedule optimisation recommended.",
       },
       moderate: {
         label: "Moderate",
         // [APPROX] — significant reduction, non-essential systems must be cut
-        parameterOverrides: { energyAvailableKwh: 180, energyDailyConsumptionKwh: 210 },
+        parameterOverrides: { energyAvailableKwh: 180, energyConsumptionKwhPerDay: 210 },
         effectSummary:
           "Energy deficit. Non-essential systems must be cut. Reduce LED intensity in low-priority zones.",
       },
       critical: {
         label: "Critical",
         // [APPROX] — severe deficit, life-critical systems only
-        parameterOverrides: { energyAvailableKwh: 90, energyDailyConsumptionKwh: 210 },
+        parameterOverrides: { energyAvailableKwh: 90, energyConsumptionKwhPerDay: 210 },
         effectSummary:
           "Severe energy deficit. Only life-critical systems can be maintained. " +
           "Significant crop growth slowdown expected. Nutrition Preservation Mode recommended.",
@@ -135,13 +135,23 @@ export const SCENARIO_CATALOG: Record<FailureScenarioType, ScenarioDefinition> =
       mild: {
         label: "Mild",
         // [APPROX] — just above lettuce optimal max (22°C), below stress threshold (25°C)
-        parameterOverrides: { temperatureOverrideAllZonesC: 24 },
+        parameterOverrides: {
+          temperatureZoneA: 24,
+          temperatureZoneB: 24,
+          temperatureZoneC: 24,
+          temperatureZoneD: 24,
+        },
         effectSummary: "Temperature at 24°C. Within tolerance for most crops. Lettuce approaching stress threshold.",
       },
       moderate: {
         label: "Moderate",
         // [APPROX] — above lettuce stress threshold, potato approaching limit
-        parameterOverrides: { temperatureOverrideAllZonesC: 27 },
+        parameterOverrides: {
+          temperatureZoneA: 27,
+          temperatureZoneB: 27,
+          temperatureZoneC: 27,
+          temperatureZoneD: 27,
+        },
         effectSummary:
           "Temperature at 27°C. Lettuce bolting risk active. Potato yield reduction beginning. " +
           "Reduce LED intensity to lower heat load.",
@@ -149,7 +159,12 @@ export const SCENARIO_CATALOG: Record<FailureScenarioType, ScenarioDefinition> =
       critical: {
         label: "Critical",
         // [APPROX] — above all crop stress thresholds except beans
-        parameterOverrides: { temperatureOverrideAllZonesC: 32 },
+        parameterOverrides: {
+          temperatureZoneA: 32,
+          temperatureZoneB: 32,
+          temperatureZoneC: 32,
+          temperatureZoneD: 32,
+        },
         effectSummary:
           "Temperature at 32°C. Lettuce and potato zones critically stressed. " +
           "Immediate ventilation and light reduction required. " +

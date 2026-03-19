@@ -5,15 +5,18 @@ import {
   resetMissionState,
   setMissionState,
 } from "./mission.store";
-import {
-  getCurrentMissionSnapshot,
-} from "./mission.service";
-import type { MissionState, MissionStatus } from "./mission.types";
+import { getCurrentMissionSnapshot } from "./mission.service";
+import type {
+  MicronutrientStatus,
+  MissionState,
+  MissionStatus,
+  NutritionStatus,
+} from "./mission.types";
 
 const REQUIRED_KEYS: Array<keyof MissionState> = [
   "missionId",
   "missionDay",
-  "missionDurationDays",
+  "missionDurationTotal",
   "crewSize",
   "status",
   "zones",
@@ -41,6 +44,36 @@ function expectStatus(snapshot: MissionState, expected: MissionStatus): void {
   );
 }
 
+function buildZeroMicronutrientStatus(target: number, unit: string): MicronutrientStatus {
+  return {
+    produced: 0,
+    target,
+    unit,
+    coveragePercent: 0,
+  };
+}
+
+function buildZeroNutritionStatus(crewSize: number): NutritionStatus {
+  return {
+    dailyCaloriesProduced: 0,
+    dailyCaloriesTarget: crewSize * 3000,
+    caloricCoveragePercent: 0,
+    dailyProteinG: 0,
+    dailyProteinTarget: crewSize * 112.5,
+    proteinCoveragePercent: 0,
+    vitaminA: buildZeroMicronutrientStatus(3600, "µg"),
+    vitaminC: buildZeroMicronutrientStatus(360, "mg"),
+    vitaminK: buildZeroMicronutrientStatus(480, "µg"),
+    folate: buildZeroMicronutrientStatus(1600, "µg"),
+    iron: buildZeroMicronutrientStatus(32, "mg"),
+    potassium: buildZeroMicronutrientStatus(14000, "mg"),
+    magnesium: buildZeroMicronutrientStatus(1600, "mg"),
+    nutritionalCoverageScore: 0,
+    daysSafe: 0,
+    trend: "stable",
+  };
+}
+
 function main(): void {
   const seedBefore = cloneMissionState(MISSION_SEED);
 
@@ -57,7 +90,7 @@ function main(): void {
     zones: baseline.zones,
     resources: baseline.resources,
     crewSize: baseline.crewSize,
-    missionDurationDays: baseline.missionDurationDays,
+    missionDurationTotal: baseline.missionDurationTotal,
     missionDay: baseline.missionDay,
     previousScore: MISSION_SEED.nutrition.nutritionalCoverageScore,
   });
@@ -69,32 +102,21 @@ function main(): void {
   expectStatus(baseline, "nominal");
 
   const staleNutritionState = cloneMissionState(MISSION_SEED);
-  staleNutritionState.nutrition = {
-    dailyCaloriesProduced: 0,
-    dailyCaloriesTarget: staleNutritionState.crewSize * 3000,
-    caloricCoveragePercent: 0,
-    dailyProteinProducedG: 0,
-    dailyProteinTargetG: staleNutritionState.crewSize * 112.5,
-    proteinCoveragePercent: 0,
-    micronutrientAdequacyPercent: 0,
-    nutritionalCoverageScore: 0,
-    daysSafe: 0,
-    trend: "stable",
-  };
+  staleNutritionState.nutrition = buildZeroNutritionStatus(staleNutritionState.crewSize);
 
   setMissionState(staleNutritionState);
-  const refreshedNutrition = getCurrentMissionSnapshot();
+  const refreshedNutritionSnapshot = getCurrentMissionSnapshot();
   const expectedRefreshedNutrition = calculateNutrition({
-    zones: refreshedNutrition.zones,
-    resources: refreshedNutrition.resources,
-    crewSize: refreshedNutrition.crewSize,
-    missionDurationDays: refreshedNutrition.missionDurationDays,
-    missionDay: refreshedNutrition.missionDay,
+    zones: refreshedNutritionSnapshot.zones,
+    resources: refreshedNutritionSnapshot.resources,
+    crewSize: refreshedNutritionSnapshot.crewSize,
+    missionDurationTotal: refreshedNutritionSnapshot.missionDurationTotal,
+    missionDay: refreshedNutritionSnapshot.missionDay,
     previousScore: 0,
   });
 
   assert(
-    JSON.stringify(refreshedNutrition.nutrition) ===
+    JSON.stringify(refreshedNutritionSnapshot.nutrition) ===
       JSON.stringify(expectedRefreshedNutrition),
     "Mission service did not replace stale nutrition with a fresh calculation",
   );
@@ -102,14 +124,13 @@ function main(): void {
   const warningState = cloneMissionState(MISSION_SEED);
   warningState.activeScenario = {
     scenarioId: "scenario-warning-001",
-    type: "water_recycling_decline",
+    scenarioType: "water_recycling_decline",
     severity: "mild",
-    title: "Water Recycling Drift",
     description: "Validation scenario for warning status.",
     injectedAt: "2026-03-19T12:00:00.000Z",
-    affectedZoneIds: ["zone-a"],
+    affectedZones: ["zone-A"],
     parameterOverrides: {
-      waterRecyclingEfficiencyPercent: 78,
+      waterRecyclingEfficiency: 78,
     },
   };
 
@@ -119,16 +140,18 @@ function main(): void {
 
   const criticalState = cloneMissionState(MISSION_SEED);
   criticalState.zones = criticalState.zones.map((zone) =>
-    zone.zoneId === "zone-b"
+    zone.zoneId === "zone-B"
       ? {
           ...zone,
-          status: "critical",
           stress: {
             ...zone.stress,
             active: true,
-            type: "water_stress",
+            type: "water_deficit",
             severity: "critical",
-            summary: "Critical validation stress.",
+          },
+          sensors: {
+            ...zone.sensors,
+            soilMoisture: 12,
           },
         }
       : zone,
@@ -176,7 +199,7 @@ function main(): void {
     JSON.stringify(
       {
         baselineStatus: baseline.status,
-        refreshedNutritionStatus: refreshedNutrition.status,
+        refreshedNutritionStatus: refreshedNutritionSnapshot.status,
         warningStatus: warningSnapshot.status,
         criticalStatus: criticalSnapshot.status,
         preservationModeStatus: preservationSnapshot.status,

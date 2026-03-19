@@ -1,15 +1,21 @@
+import { CROP_PROFILES } from "../../data/cropProfiles.data";
 import {
   buildMissionSnapshot,
   getCurrentMissionSnapshot,
 } from "../mission/mission.service";
+import {
+  createPlannerOutput,
+} from "../mission/mission.monitoring";
 import type {
   CropType,
   MissionState,
   StressSeverity,
+  StressType,
 } from "../mission/mission.types";
 import type {
   PlannerAction,
   PlannerExecution,
+  PlannerMode,
   PlannerOutput,
 } from "./planner.types";
 
@@ -35,6 +41,10 @@ function cloneMissionState(state: MissionState): MissionState {
   return structuredClone(state);
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function roundToSingleDecimal(value: number): number {
   return Math.round(value * 10) / 10;
 }
@@ -44,6 +54,10 @@ function shouldEnterNutritionPreservationMode(state: MissionState): boolean {
     state.nutrition.nutritionalCoverageScore < NUTRITION_PRESERVATION_SCORE_THRESHOLD ||
     state.nutrition.daysSafe < NUTRITION_PRESERVATION_DAYS_THRESHOLD
   );
+}
+
+function describeZone(zone: MissionState["zones"][number]): string {
+  return `${zone.zoneId} (${CROP_PROFILES[zone.cropType].label})`;
 }
 
 function getPrioritySortedZones(state: MissionState, descending = false) {
@@ -93,15 +107,16 @@ function applyYieldShift(state: MissionState, zoneId: string, factor: number): v
   );
 }
 
-function applyStressShift(
-  state: MissionState,
-  zoneId: string,
-  direction: "up" | "down",
-  stressType: "water_stress" | "energy_pressure" | "temperature_drift",
-  summary: string,
-): void {
+function applyStressShift(input: {
+  state: MissionState;
+  zoneId: string;
+  direction: "up" | "down";
+  stressType: StressType;
+}): void {
+  const { state, zoneId, direction, stressType } = input;
+
   state.zones = state.zones.map((zone) => {
-    if (zone.zoneId !== zoneId) {
+    if (zone.zoneId !== zoneId || zone.status === "offline") {
       return zone;
     }
 
@@ -114,7 +129,6 @@ function applyStressShift(
         active: severity !== "none",
         type: severity === "none" ? "none" : stressType,
         severity,
-        summary,
       },
     };
   });
@@ -125,13 +139,15 @@ function shiftAllocation(
   fromZoneId: string,
   toZoneId: string,
   amount: number,
-): void {
+): number {
   let freed = 0;
 
   state.zones = state.zones.map((zone) => {
     if (zone.zoneId === fromZoneId) {
-      const nextAllocation = Math.max(0, zone.allocationPercent - amount);
-      freed = zone.allocationPercent - nextAllocation;
+      const nextAllocation = roundToSingleDecimal(
+        clamp(zone.allocationPercent - amount, 0, 100),
+      );
+      freed = roundToSingleDecimal(zone.allocationPercent - nextAllocation);
       return {
         ...zone,
         allocationPercent: nextAllocation,
@@ -145,10 +161,61 @@ function shiftAllocation(
     zone.zoneId === toZoneId
       ? {
           ...zone,
-          allocationPercent: Math.min(100, zone.allocationPercent + freed),
+          allocationPercent: roundToSingleDecimal(
+            clamp(zone.allocationPercent + freed, 0, 100),
+          ),
         }
       : zone,
   );
+
+  return freed;
+}
+
+function adjustZoneSensors(input: {
+  state: MissionState;
+  zoneId: string;
+  soilMoistureDelta?: number;
+  lightParDelta?: number;
+  photoperiodDelta?: number;
+  temperatureDelta?: number;
+}): void {
+  const {
+    state,
+    zoneId,
+    soilMoistureDelta = 0,
+    lightParDelta = 0,
+    photoperiodDelta = 0,
+    temperatureDelta = 0,
+  } = input;
+
+  state.zones = state.zones.map((zone) => {
+    if (zone.zoneId !== zoneId) {
+      return zone;
+    }
+
+    return {
+      ...zone,
+      sensors: {
+        ...zone.sensors,
+        soilMoisture: roundToSingleDecimal(
+          clamp(zone.sensors.soilMoisture + soilMoistureDelta, 0, 100),
+        ),
+        lightPAR: roundToSingleDecimal(
+          clamp(zone.sensors.lightPAR + lightParDelta, 0, 1200),
+        ),
+        photoperiodHours: roundToSingleDecimal(
+          clamp(zone.sensors.photoperiodHours + photoperiodDelta, 0, 24),
+        ),
+        temperature: roundToSingleDecimal(
+          clamp(zone.sensors.temperature + temperatureDelta, -10, 45),
+        ),
+      },
+    };
+  });
+}
+
+function buildActionId(state: MissionState, index: number): string {
+  return `act-${state.missionDay}-${String(index).padStart(2, "0")}`;
 }
 
 function findLowestPriorityZone(state: MissionState): MissionState["zones"][number] | undefined {
@@ -163,7 +230,10 @@ function findSecondaryPriorityZone(state: MissionState): MissionState["zones"][n
   return getPrioritySortedZones(state, false)[1];
 }
 
-function applyReallocateWaterAction(state: MissionState): PlannerAction | null {
+function applyReallocateWaterAction(
+  state: MissionState,
+  index: number,
+): PlannerAction | null {
   const donor = findLowestPriorityZone(state);
   const primary = findHighestPriorityZone(state);
   const secondary = findSecondaryPriorityZone(state);
@@ -172,106 +242,175 @@ function applyReallocateWaterAction(state: MissionState): PlannerAction | null {
     return null;
   }
 
-  shiftAllocation(state, donor.zoneId, primary.zoneId, 15);
-  applyYieldShift(state, donor.zoneId, 0.82);
-  applyStressShift(
-    state,
-    donor.zoneId,
-    "up",
-    "water_stress",
-    "Planner reduced support to protect crew nutrition continuity.",
-  );
-
-  applyYieldShift(state, primary.zoneId, 1.08);
-  applyStressShift(
-    state,
-    primary.zoneId,
-    "down",
-    "water_stress",
-    "Planner protected the highest-priority calorie crop.",
-  );
+  const donorStart = donor.allocationPercent;
+  const primaryStart = primary.allocationPercent;
+  shiftAllocation(state, donor.zoneId, primary.zoneId, 10);
+  let freedSecondary = 0;
 
   if (secondary && secondary.zoneId !== donor.zoneId && secondary.zoneId !== primary.zoneId) {
-    shiftAllocation(state, donor.zoneId, secondary.zoneId, 5);
+    freedSecondary = shiftAllocation(state, donor.zoneId, secondary.zoneId, 5);
+  }
+
+  applyYieldShift(state, donor.zoneId, 0.82);
+  applyStressShift({
+    state,
+    zoneId: donor.zoneId,
+    direction: "up",
+    stressType: "water_deficit",
+  });
+  adjustZoneSensors({
+    state,
+    zoneId: donor.zoneId,
+    soilMoistureDelta: -15,
+  });
+
+  applyYieldShift(state, primary.zoneId, 1.08);
+  applyStressShift({
+    state,
+    zoneId: primary.zoneId,
+    direction: "down",
+    stressType: "water_deficit",
+  });
+  adjustZoneSensors({
+    state,
+    zoneId: primary.zoneId,
+    soilMoistureDelta: 28,
+  });
+
+  if (secondary && freedSecondary > 0) {
     applyYieldShift(state, secondary.zoneId, 1.05);
-    applyStressShift(
+    applyStressShift({
       state,
-      secondary.zoneId,
-      "down",
-      "water_stress",
-      "Planner protected the secondary protein crop.",
-    );
+      zoneId: secondary.zoneId,
+      direction: "down",
+      stressType: "water_deficit",
+    });
+    adjustZoneSensors({
+      state,
+      zoneId: secondary.zoneId,
+      soilMoistureDelta: 10,
+    });
+  }
+
+  const refreshedPrimary = state.zones.find((zone) => zone.zoneId === primary.zoneId);
+  const refreshedDonor = state.zones.find((zone) => zone.zoneId === donor.zoneId);
+  const refreshedSecondary = secondary
+    ? state.zones.find((zone) => zone.zoneId === secondary.zoneId)
+    : undefined;
+
+  const parameterChanges: Record<string, number> = {
+    [`${donor.zoneId}.allocationPercent`]: refreshedDonor?.allocationPercent ?? donorStart,
+    [`${primary.zoneId}.allocationPercent`]:
+      refreshedPrimary?.allocationPercent ?? primaryStart,
+  };
+
+  if (secondary && refreshedSecondary) {
+    parameterChanges[`${secondary.zoneId}.allocationPercent`] =
+      refreshedSecondary.allocationPercent;
   }
 
   return {
-    type: "reallocate_water",
-    description: `Shift water support away from ${donor.name} toward ${primary.name}${secondary ? ` and ${secondary.name}` : ""}.`,
-    reason: "Protect calories first, then protein, while accepting controlled cuts to lower-priority crops.",
+    actionId: buildActionId(state, index),
+    actionType: "reallocate_water",
+    urgency: "immediate",
+    description: `Reduce shared water support to ${describeZone(donor)} and redirect it toward ${describeZone(primary)}${secondary ? ` and ${describeZone(secondary)}` : ""}.`,
+    parameterChanges,
+    nutritionImpact:
+      "Protects the caloric backbone first and the protein crop second under water scarcity.",
+    tradeoff: `${describeZone(donor)} will accept lower soil moisture and slower growth.`,
   };
 }
 
-function applyReduceLightingAction(state: MissionState): PlannerAction | null {
+function applyReduceLightingAction(
+  state: MissionState,
+  index: number,
+): PlannerAction | null {
   const donor = findLowestPriorityZone(state);
+
   if (!donor) {
     return null;
   }
 
   applyYieldShift(state, donor.zoneId, 0.8);
-  applyStressShift(
+  applyStressShift({
     state,
-    donor.zoneId,
-    "up",
-    "energy_pressure",
-    "Planner reduced lighting on a lower-priority zone to preserve critical loads.",
-  );
+    zoneId: donor.zoneId,
+    direction: "up",
+    stressType: "light_deficit",
+  });
+  adjustZoneSensors({
+    state,
+    zoneId: donor.zoneId,
+    lightParDelta: -40,
+    photoperiodDelta: -2,
+    temperatureDelta: -0.5,
+  });
+
+  const refreshed = state.zones.find((zone) => zone.zoneId === donor.zoneId);
 
   return {
-    type: "reduce_lighting",
+    actionId: buildActionId(state, index),
+    actionType: "reduce_lighting",
+    urgency: "within_24h",
     targetZoneId: donor.zoneId,
-    description: `Reduce lighting intensity for ${donor.name}.`,
-    reason: "Preserve energy for higher-priority nutrition zones during scarcity.",
+    description: `Reduce LED intensity and photoperiod in ${describeZone(donor)}.`,
+    parameterChanges: {
+      [`${donor.zoneId}.sensors.lightPAR`]: refreshed?.sensors.lightPAR ?? donor.sensors.lightPAR,
+      [`${donor.zoneId}.sensors.photoperiodHours`]:
+        refreshed?.sensors.photoperiodHours ?? donor.sensors.photoperiodHours,
+    },
+    nutritionImpact: "Preserves energy availability for higher-priority zones without pausing the crop outright.",
+    tradeoff: `${describeZone(donor)} will experience slower growth and lower projected yield.`,
   };
 }
 
-function applyAdjustTemperatureAction(state: MissionState): PlannerAction | null {
-  let changed = false;
-
-  state.zones = state.zones.map((zone) => {
-    if (zone.stress.type !== "temperature_drift" && zone.stress.severity === "none") {
-      return zone;
-    }
-
-    const nextSeverity = stepStressSeverity(zone.stress.severity, "down");
-    if (nextSeverity !== zone.stress.severity) {
-      changed = true;
-    }
-
-    return {
-      ...zone,
-      status: deriveZoneStatus(nextSeverity),
-      stress: {
-        ...zone.stress,
-        active: nextSeverity !== "none",
-        type: nextSeverity === "none" ? "none" : "temperature_drift",
-        severity: nextSeverity,
-        summary: "Planner adjusted the greenhouse temperature setpoint toward recovery.",
-      },
-      projectedYieldKg: roundToSingleDecimal(zone.projectedYieldKg * 1.05),
-    };
+function applyAdjustTemperatureAction(
+  state: MissionState,
+  index: number,
+): PlannerAction | null {
+  const heatZones = state.zones.filter((zone) => {
+    return zone.stress.type === "heat" || zone.sensors.temperature >= CROP_PROFILES[zone.cropType].tempHeatStressThreshold;
   });
 
-  if (!changed) {
+  if (heatZones.length === 0) {
     return null;
   }
 
+  for (const zone of heatZones) {
+    adjustZoneSensors({
+      state,
+      zoneId: zone.zoneId,
+      temperatureDelta: -3,
+    });
+    applyYieldShift(state, zone.zoneId, 1.05);
+    applyStressShift({
+      state,
+      zoneId: zone.zoneId,
+      direction: "down",
+      stressType: "heat",
+    });
+  }
+
   return {
-    type: "adjust_temperature",
-    description: "Lower the greenhouse temperature setpoint to relieve heat stress.",
-    reason: "Temperature drift is degrading yield, especially for lettuce and potatoes.",
+    actionId: buildActionId(state, index),
+    actionType: "adjust_temperature_setpoint",
+    urgency: "immediate",
+    description: "Lower the greenhouse temperature setpoint to relieve heat stress across affected zones.",
+    parameterChanges: Object.fromEntries(
+      heatZones.map((zone) => {
+        const refreshed = state.zones.find((entry) => entry.zoneId === zone.zoneId);
+        return [`${zone.zoneId}.sensors.temperature`, refreshed?.sensors.temperature ?? zone.sensors.temperature];
+      }),
+    ),
+    nutritionImpact: "Recovers projected yield in heat-sensitive crops, especially lettuce and potatoes.",
+    tradeoff: "Temperature recovery consumes scarce climate-control margin.",
   };
 }
 
-function applyFlagZoneOfflineAction(state: MissionState): PlannerAction | null {
+function applyPauseZoneAction(
+  state: MissionState,
+  index: number,
+): PlannerAction | null {
   const donor = findLowestPriorityZone(state);
   const primary = findHighestPriorityZone(state);
 
@@ -291,9 +430,8 @@ function applyFlagZoneOfflineAction(state: MissionState): PlannerAction | null {
         stress: {
           ...zone.stress,
           active: true,
-          type: zone.stress.type === "none" ? "water_stress" : zone.stress.type,
+          type: zone.stress.type === "none" ? "water_deficit" : zone.stress.type,
           severity: "critical",
-          summary: "Planner flagged this lower-priority zone offline to protect crew nutrition continuity.",
         },
       };
     }
@@ -301,7 +439,9 @@ function applyFlagZoneOfflineAction(state: MissionState): PlannerAction | null {
     if (zone.zoneId === primary.zoneId) {
       return {
         ...zone,
-        allocationPercent: Math.min(100, zone.allocationPercent + freedAllocation),
+        allocationPercent: roundToSingleDecimal(
+          clamp(zone.allocationPercent + freedAllocation, 0, 100),
+        ),
         projectedYieldKg: roundToSingleDecimal(zone.projectedYieldKg * 1.12),
       };
     }
@@ -309,19 +449,33 @@ function applyFlagZoneOfflineAction(state: MissionState): PlannerAction | null {
     return zone;
   });
 
-  applyStressShift(
+  applyStressShift({
     state,
-    primary.zoneId,
-    "down",
-    "water_stress",
-    "Planner redirected released support into the top-priority crop.",
-  );
+    zoneId: primary.zoneId,
+    direction: "down",
+    stressType: "water_deficit",
+  });
+  adjustZoneSensors({
+    state,
+    zoneId: primary.zoneId,
+    soilMoistureDelta: 25,
+  });
+
+  const refreshedPrimary = state.zones.find((zone) => zone.zoneId === primary.zoneId);
 
   return {
-    type: "flag_zone_offline",
+    actionId: buildActionId(state, index),
+    actionType: "pause_zone",
+    urgency: "immediate",
     targetZoneId: donor.zoneId,
-    description: `Flag ${donor.name} offline and redirect support to ${primary.name}.`,
-    reason: "Last-resort action to preserve calories and protein when nutrition continuity is at risk.",
+    description: `Pause ${describeZone(donor)} and redirect shared support to ${describeZone(primary)}.`,
+    parameterChanges: {
+      [`${donor.zoneId}.allocationPercent`]: 0,
+      [`${primary.zoneId}.allocationPercent`]:
+        refreshedPrimary?.allocationPercent ?? primary.allocationPercent,
+    },
+    nutritionImpact: "Protects calories and protein when continuity is at immediate risk.",
+    tradeoff: `${describeZone(donor)} is taken offline and its output is lost until recovery.`,
   };
 }
 
@@ -331,10 +485,10 @@ function buildExplanation(
   actions: PlannerAction[],
 ): string {
   if (actions.length === 0) {
-    return "Nutrition remains above the preservation thresholds, so no deterministic reallocation is recommended.";
+    return "Nutrition remains above the preservation thresholds, so the planner keeps the greenhouse in normal mode with no deterministic intervention.";
   }
 
-  return `Nutrition Preservation Mode is active because the mission nutrition score is ${before.nutrition.nutritionalCoverageScore} with ${before.nutrition.daysSafe} safe days remaining. The planner protects calories first through potatoes, then protein through beans, and accepts controlled cuts to lower-priority crops when necessary. The recommended actions shift support away from lower-priority zones and forecast the nutrition score moving from ${before.nutrition.nutritionalCoverageScore} to ${after.nutrition.nutritionalCoverageScore}.`;
+  return `Nutrition Preservation Mode is active because the mission score is ${before.nutrition.nutritionalCoverageScore} with ${before.nutrition.daysSafe} safe days remaining. The planner protects potatoes first for calories, then beans for protein, and accepts controlled cuts to lower-priority zones when necessary. This forecast moves the nutrition score from ${before.nutrition.nutritionalCoverageScore} to ${after.nutrition.nutritionalCoverageScore}.`;
 }
 
 export function createNutritionPreservationExecution(
@@ -343,19 +497,21 @@ export function createNutritionPreservationExecution(
   const beforeSnapshot = buildMissionSnapshot(sourceState);
 
   if (!shouldEnterNutritionPreservationMode(beforeSnapshot)) {
-    const plan: PlannerOutput = {
-      mode: "normal",
-      recommendedActions: [],
-      nutritionForecast: {
-        before: beforeSnapshot.nutrition,
-        after: beforeSnapshot.nutrition,
-      },
-      explanation:
-        "Nutrition remains above the preservation thresholds, so the backend keeps the mission in normal mode with no deterministic reallocation actions.",
-    };
+    const plan = createPlannerOutput({
+      beforeState: beforeSnapshot,
+      missionState: beforeSnapshot,
+      reason: "Planner analyze: no action required",
+    });
 
     return {
-      plan,
+      plan: {
+        ...plan,
+        nutritionRiskDetected: false,
+      },
+      mode: "normal",
+      recommendedActions: [],
+      explanation:
+        "Nutrition remains above the preservation thresholds, so the backend keeps the mission in normal mode with no deterministic reallocation actions.",
       beforeSnapshot,
       afterSnapshot: beforeSnapshot,
     };
@@ -364,14 +520,14 @@ export function createNutritionPreservationExecution(
   const afterState = cloneMissionState(beforeSnapshot);
   afterState.status = "nutrition_preservation_mode";
   const actions: PlannerAction[] = [];
-  const activeScenarioType = beforeSnapshot.activeScenario?.type ?? null;
+  const activeScenarioType = beforeSnapshot.activeScenario?.scenarioType ?? null;
 
   const primaryAction =
     activeScenarioType === "energy_budget_reduction"
-      ? applyReduceLightingAction(afterState)
+      ? applyReduceLightingAction(afterState, 1)
       : activeScenarioType === "temperature_control_failure"
-        ? applyAdjustTemperatureAction(afterState)
-        : applyReallocateWaterAction(afterState);
+        ? applyAdjustTemperatureAction(afterState, 1)
+        : applyReallocateWaterAction(afterState, 1);
 
   if (primaryAction) {
     actions.push(primaryAction);
@@ -381,14 +537,14 @@ export function createNutritionPreservationExecution(
     beforeSnapshot.nutrition.nutritionalCoverageScore < 55 ||
     beforeSnapshot.nutrition.daysSafe < 20
   ) {
-    const lastResortAction = applyFlagZoneOfflineAction(afterState);
+    const lastResortAction = applyPauseZoneAction(afterState, actions.length + 1);
     if (lastResortAction) {
       actions.push(lastResortAction);
     }
   }
 
   if (actions.length < 3 && activeScenarioType !== "water_recycling_decline") {
-    const waterAction = applyReallocateWaterAction(afterState);
+    const waterAction = applyReallocateWaterAction(afterState, actions.length + 1);
     if (waterAction) {
       actions.push(waterAction);
     }
@@ -396,19 +552,21 @@ export function createNutritionPreservationExecution(
 
   const recommendedActions = actions.slice(0, 3);
   const afterSnapshot = buildMissionSnapshot(afterState);
-
-  const plan: PlannerOutput = {
-    mode: "nutrition_preservation",
-    recommendedActions,
-    nutritionForecast: {
-      before: beforeSnapshot.nutrition,
-      after: afterSnapshot.nutrition,
-    },
-    explanation: buildExplanation(beforeSnapshot, afterSnapshot, recommendedActions),
-  };
+  const mode: PlannerMode = "nutrition_preservation";
+  const plan: PlannerOutput = createPlannerOutput({
+    beforeState: beforeSnapshot,
+    missionState: afterSnapshot,
+    reason: "Planner: Nutrition Preservation Mode projection",
+  });
 
   return {
-    plan,
+    plan: {
+      ...plan,
+      nutritionRiskDetected: true,
+    },
+    mode,
+    recommendedActions,
+    explanation: buildExplanation(beforeSnapshot, afterSnapshot, recommendedActions),
     beforeSnapshot,
     afterSnapshot,
   };

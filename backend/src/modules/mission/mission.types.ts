@@ -1,3 +1,24 @@
+import type {
+  CropType as SharedCropType,
+  CropZone as SharedCropZone,
+  EventLogEntry as SharedEventLogEntry,
+  EventType as SharedEventType,
+  FailureScenario as SharedFailureScenario,
+  MissionState as SharedMissionState,
+  MissionStatus as SharedMissionStatus,
+  MicronutrientStatus as SharedMicronutrientStatus,
+  NutritionStatus as SharedNutritionStatus,
+  NutritionTrend as SharedNutritionTrend,
+  ResourceState as SharedResourceState,
+  ScenarioSeverity as SharedScenarioSeverity,
+  ScenarioType as SharedScenarioType,
+  StressSeverity as SharedStressSeverity,
+  StressState as SharedStressState,
+  StressType as SharedStressType,
+  ZoneSensors as SharedZoneSensors,
+  ZoneStatus as SharedZoneStatus,
+} from "../../../../shared/schemas/missionState.schema";
+
 export const missionStatusValues = [
   "nominal",
   "warning",
@@ -12,15 +33,19 @@ export const cropZoneStatusValues = [
   "stressed",
   "critical",
   "harvesting",
+  "replanting",
   "offline",
 ] as const;
 
 export const stressTypeValues = [
   "none",
-  "water_stress",
-  "temperature_drift",
-  "nutrient_imbalance",
-  "energy_pressure",
+  "heat",
+  "cold",
+  "water_deficit",
+  "nitrogen_deficiency",
+  "light_deficit",
+  "energy_shortage",
+  "salinity",
 ] as const;
 
 export const stressSeverityValues = [
@@ -39,98 +64,33 @@ export const scenarioTypeValues = [
 
 export const scenarioSeverityValues = ["mild", "moderate", "critical"] as const;
 
-export const eventLevelValues = ["info", "warning", "critical"] as const;
-
-export const nutrientMixStatusValues = ["balanced", "watch", "critical"] as const;
+export const eventLevelValues = [
+  "info",
+  "warning",
+  "critical",
+  "ai_action",
+  "scenario_injected",
+  "harvest",
+  "replant",
+] as const;
 
 export const nutritionTrendValues = ["improving", "stable", "declining"] as const;
 
-export type MissionStatus = (typeof missionStatusValues)[number];
-export type CropType = (typeof cropTypeValues)[number];
-export type CropZoneStatus = (typeof cropZoneStatusValues)[number];
-export type StressType = (typeof stressTypeValues)[number];
-export type StressSeverity = (typeof stressSeverityValues)[number];
-export type FailureScenarioType = (typeof scenarioTypeValues)[number];
-export type FailureScenarioSeverity = (typeof scenarioSeverityValues)[number];
-export type EventLevel = (typeof eventLevelValues)[number];
-export type NutrientMixStatus = (typeof nutrientMixStatusValues)[number];
-export type NutritionTrend = (typeof nutritionTrendValues)[number];
-
-export interface ZoneStress {
-  active: boolean;
-  type: StressType;
-  severity: StressSeverity;
-  summary: string;
-}
-
-export interface CropZone {
-  zoneId: string;
-  name: string;
-  cropType: CropType;
-  areaM2: number;
-  growthDay: number;
-  growthCycleDays: number;
-  growthProgressPercent: number;
-  projectedYieldKg: number;
-  allocationPercent: number;
-  status: CropZoneStatus;
-  stress: ZoneStress;
-}
-
-export interface ResourceState {
-  waterReservoirL: number;
-  waterRecyclingEfficiencyPercent: number;
-  waterDailyConsumptionL: number;
-  nutrientSolutionLevelPercent: number;
-  nutrientMixStatus: NutrientMixStatus;
-  energyAvailableKwh: number;
-  energyDailyConsumptionKwh: number;
-  energyReserveHours: number;
-}
-
-export interface NutritionStatus {
-  dailyCaloriesProduced: number;
-  dailyCaloriesTarget: number;
-  caloricCoveragePercent: number;
-  dailyProteinProducedG: number;
-  dailyProteinTargetG: number;
-  proteinCoveragePercent: number;
-  micronutrientAdequacyPercent: number;
-  nutritionalCoverageScore: number;
-  daysSafe: number;
-  trend: NutritionTrend;
-}
-
-export interface FailureScenario {
-  scenarioId: string;
-  type: FailureScenarioType;
-  severity: FailureScenarioSeverity;
-  title: string;
-  description: string;
-  injectedAt: string;
-  affectedZoneIds: string[];
-  parameterOverrides: Record<string, number>;
-}
-
-export interface EventLogEntry {
-  eventId: string;
-  timestamp: string;
-  missionDay: number;
-  level: EventLevel;
-  message: string;
-  zoneId?: string;
-}
-
-export interface MissionState {
-  missionId: string;
-  missionDay: number;
-  missionDurationDays: number;
-  crewSize: number;
-  status: MissionStatus;
-  zones: CropZone[];
-  resources: ResourceState;
-  nutrition: NutritionStatus;
-  activeScenario: FailureScenario | null;
-  eventLog: EventLogEntry[];
-  lastUpdated: string;
-}
+export type MissionStatus = SharedMissionStatus;
+export type CropType = SharedCropType;
+export type CropZoneStatus = SharedZoneStatus;
+export type StressType = SharedStressType;
+export type StressSeverity = SharedStressSeverity;
+export type FailureScenarioType = SharedScenarioType;
+export type FailureScenarioSeverity = SharedScenarioSeverity;
+export type EventLevel = SharedEventType;
+export type NutritionTrend = SharedNutritionTrend;
+export type ZoneSensors = SharedZoneSensors;
+export type ZoneStress = SharedStressState;
+export type CropZone = SharedCropZone;
+export type ResourceState = SharedResourceState;
+export type MicronutrientStatus = SharedMicronutrientStatus;
+export type NutritionStatus = SharedNutritionStatus;
+export type FailureScenario = SharedFailureScenario;
+export type EventLogEntry = SharedEventLogEntry;
+export type MissionState = SharedMissionState;

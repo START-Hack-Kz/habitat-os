@@ -1,161 +1,206 @@
-/**
- * mission.seed.ts
- * Baseline mission seed state for the Mars Greenhouse simulation.
- * Represents a nominal mid-mission snapshot (day 87 of 450) before any failure.
- * Use this to initialise or reset the simulation.
- *
- * Sensor/environment values are commented with their status relative to
- * MCP-derived optimal ranges where applicable.
- *
- * MCP-grounded values are noted inline.
- * [APPROX] marks values where MCP gave qualitative guidance only.
- */
+import { calculateNutrition } from "../modules/nutrition/nutrition.calculator";
+import type { CropType, MissionState, ZoneSensors, ZoneStress } from "../modules/mission/mission.types";
 
-import type { MissionState } from "../modules/mission/mission.types";
+function roundToSingleDecimal(value: number): number {
+  return Math.round(value * 10) / 10;
+}
 
-export const MISSION_SEED: MissionState = {
+function buildGrowthProgressPercent(growthDay: number, growthCycleTotal: number): number {
+  return roundToSingleDecimal((growthDay / Math.max(1, growthCycleTotal)) * 100);
+}
+
+function buildSensors(input: ZoneSensors): ZoneSensors {
+  return input;
+}
+
+function buildStress(input: ZoneStress): ZoneStress {
+  return input;
+}
+
+function buildBaselineSensors(cropType: CropType): ZoneSensors {
+  if (cropType === "lettuce") {
+    return buildSensors({
+      temperature: 21,
+      humidity: 60,
+      co2Ppm: 950,
+      lightPAR: 210,
+      photoperiodHours: 16,
+      nutrientPH: 6.1,
+      electricalConductivity: 1.8,
+      soilMoisture: 74,
+    });
+  }
+
+  if (cropType === "potato") {
+    return buildSensors({
+      temperature: 19,
+      humidity: 68,
+      co2Ppm: 950,
+      lightPAR: 320,
+      photoperiodHours: 16,
+      nutrientPH: 5.8,
+      electricalConductivity: 2.1,
+      soilMoisture: 78,
+    });
+  }
+
+  if (cropType === "beans") {
+    return buildSensors({
+      temperature: 22,
+      humidity: 64,
+      co2Ppm: 950,
+      lightPAR: 240,
+      photoperiodHours: 16,
+      nutrientPH: 6.3,
+      electricalConductivity: 2,
+      soilMoisture: 72,
+    });
+  }
+
+  return buildSensors({
+    temperature: 20,
+    humidity: 62,
+    co2Ppm: 950,
+    lightPAR: 180,
+    photoperiodHours: 16,
+    nutrientPH: 6,
+    electricalConductivity: 1.7,
+    soilMoisture: 70,
+  });
+}
+
+const BASE_MISSION_SEED = {
   missionId: "mars-greenhouse-alpha",
-  missionDay: 87,           // mid-mission — more dramatic than day 1
-  missionDurationDays: 450, // MCP: 450-day surface mission
-  crewSize: 4,              // MCP: 4-astronaut crew
+  missionDay: 87,
+  missionDurationTotal: 450,
+  crewSize: 4,
   status: "nominal",
-
-  // ── Crop zones ─────────────────────────────────────────────────────────────
-  // Area allocation follows MCP strategic model:
-  // 40–50% potato, 20–30% legumes, 15–20% leafy greens, 5–10% radish
-  // Total area: 200 m² → potato 45%, beans 25%, lettuce 20%, radish 10%
-  // Area sized so nominal caloric coverage ≈ 90% at 12,000 kcal/day target [APPROX]
   zones: [
     {
-      zoneId: "zone-a",
-      name: "Leafy Greens Bay",
+      zoneId: "zone-A",
       cropType: "lettuce",
       areaM2: 40,
       growthDay: 19,
-      growthCycleDays: 35,   // MCP: 30–45 days; using 35 [APPROX midpoint]
-      growthProgressPercent: 54.3,
-      projectedYieldKg: 160, // [APPROX] 40 m² × 4 kg/m² (mid-range of MCP 3–5 kg/m²)
-      allocationPercent: 22,
+      growthCycleTotal: 35,
+      growthProgressPercent: buildGrowthProgressPercent(19, 35),
       status: "healthy",
-      stress: {
+      sensors: buildBaselineSensors("lettuce"),
+      stress: buildStress({
         active: false,
         type: "none",
         severity: "none",
-        summary: "Lettuce canopy is within optimal range. No stress detected.",
-      },
+        boltingRisk: false,
+        symptoms: [],
+      }),
+      projectedYieldKg: 160,
+      allocationPercent: 22,
     },
     {
-      zoneId: "zone-b",
-      name: "Tuber Production Bay",
+      zoneId: "zone-B",
       cropType: "potato",
       areaM2: 90,
       growthDay: 46,
-      growthCycleDays: 90,   // MCP: 70–120 days; using 90 [APPROX midpoint]
-      growthProgressPercent: 51.1,
-      projectedYieldKg: 540, // [APPROX] 90 m² × 6 kg/m² (mid-range of MCP 4–8 kg/m²)
-      allocationPercent: 38,
+      growthCycleTotal: 90,
+      growthProgressPercent: buildGrowthProgressPercent(46, 90),
       status: "healthy",
-      stress: {
+      sensors: buildBaselineSensors("potato"),
+      stress: buildStress({
         active: false,
         type: "none",
         severity: "none",
-        summary: "Potato canopy is tracking within the target range.",
-      },
+        boltingRisk: false,
+        symptoms: [],
+      }),
+      projectedYieldKg: 540,
+      allocationPercent: 38,
     },
     {
-      zoneId: "zone-c",
-      name: "Protein Crop Bay",
+      zoneId: "zone-C",
       cropType: "beans",
       areaM2: 50,
       growthDay: 31,
-      growthCycleDays: 60,   // MCP: 50–70 days; using 60 [APPROX midpoint]
-      growthProgressPercent: 51.7,
-      projectedYieldKg: 150, // [APPROX] 50 m² × 3 kg/m² (mid-range of MCP 2–4 kg/m²)
-      allocationPercent: 26,
+      growthCycleTotal: 60,
+      growthProgressPercent: buildGrowthProgressPercent(31, 60),
       status: "healthy",
-      stress: {
+      sensors: buildBaselineSensors("beans"),
+      stress: buildStress({
         active: false,
         type: "none",
         severity: "none",
-        summary: "Bean vines are stable under current lighting conditions.",
-      },
+        boltingRisk: false,
+        symptoms: [],
+      }),
+      projectedYieldKg: 150,
+      allocationPercent: 26,
     },
     {
-      zoneId: "zone-d",
-      name: "Fast Harvest Bay",
+      zoneId: "zone-D",
       cropType: "radish",
       areaM2: 20,
       growthDay: 13,
-      growthCycleDays: 25,   // MCP: 21–30 days; using 25 [APPROX midpoint]
-      growthProgressPercent: 52.0,
-      projectedYieldKg: 60,  // [APPROX] 20 m² × 3 kg/m² (mid-range of MCP 2–4 kg/m²)
-      allocationPercent: 14,
+      growthCycleTotal: 25,
+      growthProgressPercent: buildGrowthProgressPercent(13, 25),
       status: "healthy",
-      stress: {
+      sensors: buildBaselineSensors("radish"),
+      stress: buildStress({
         active: false,
         type: "none",
         severity: "none",
-        summary: "Radish zone is on pace for the planned harvest window.",
-      },
+        boltingRisk: false,
+        symptoms: [],
+      }),
+      projectedYieldKg: 60,
+      allocationPercent: 14,
     },
   ],
-
-  // ── Resource state ──────────────────────────────────────────────────────────
   resources: {
-    waterReservoirL: 5800,                  // normal — healthy reserve for mid-mission [APPROX]
-    waterRecyclingEfficiencyPercent: 91,    // normal — MCP target >85–95%; 91% is healthy
-    waterDailyConsumptionL: 112,            // normal — [APPROX] 4 zones × ~28 L/day average
-    nutrientSolutionLevelPercent: 88,       // normal — well-stocked [APPROX]
-    nutrientMixStatus: "balanced",          // normal
-    energyAvailableKwh: 420,               // normal — healthy reserve [APPROX]
-    energyDailyConsumptionKwh: 195,        // normal — [APPROX] lighting + climate + pumps
-    energyReserveHours: 51,                // normal — derived: (420 / 195) × 24 [APPROX]
+    waterReservoirL: 5800,
+    waterRecyclingEfficiency: 91,
+    waterDailyConsumptionL: 112,
+    waterDaysRemaining: 51.8,
+    energyAvailableKwh: 420,
+    energyConsumptionKwhPerDay: 195,
+    solarGenerationKwhPerDay: 185,
+    energyDaysRemaining: 42,
+    nutrientN: 180,
+    nutrientP: 55,
+    nutrientK: 220,
   },
-
-  // ── Nutrition status ────────────────────────────────────────────────────────
-  // Targets from MCP: 12,000 kcal/day (4 × 3,000), 450 g protein/day (4 × ~112g)
-  // Values below are what calculateNutrition() produces for this seed state.
-  nutrition: {
-    dailyCaloriesProduced: 8190,           // normal — 68% coverage [calculator-derived]
-    dailyCaloriesTarget: 12000,            // MCP-grounded
-    caloricCoveragePercent: 68,            // normal [calculator-derived]
-    dailyProteinProducedG: 376,            // normal — 84% of target [calculator-derived]
-    dailyProteinTargetG: 450,              // MCP-grounded
-    proteinCoveragePercent: 84,            // normal [calculator-derived]
-    micronutrientAdequacyPercent: 100,     // normal — all zones healthy
-    nutritionalCoverageScore: 79,          // normal — weighted composite [calculator-derived]
-    daysSafe: 287,                         // normal — comfortable runway [calculator-derived]
-    trend: "stable",                       // nominal state = stable
-  },
-
-  // ── No active scenario ──────────────────────────────────────────────────────
   activeScenario: null,
-
-  // ── Seed event log ──────────────────────────────────────────────────────────
   eventLog: [
     {
       eventId: "evt-seed-003",
       timestamp: "2026-03-19T08:00:00.000Z",
       missionDay: 87,
-      level: "info",
-      message: "Zone D radish on track for harvest in 12 days.",
-      zoneId: "zone-d",
+      type: "info",
+      message: "Zone-D radish remains on track for harvest in 12 days.",
+      zoneId: "zone-D",
     },
     {
       eventId: "evt-seed-002",
       timestamp: "2026-03-18T14:00:00.000Z",
       missionDay: 86,
-      level: "info",
-      message: "Water recycling efficiency at 91%. All systems nominal.",
+      type: "info",
+      message: "Water recycling efficiency steady at 91%. All greenhouse systems nominal.",
     },
     {
       eventId: "evt-seed-001",
       timestamp: "2026-03-17T09:00:00.000Z",
       missionDay: 85,
-      level: "info",
-      message: "Mission day 85 check complete. All zones healthy. Nutrition coverage at 89%.",
+      type: "info",
+      message: "Mission day 85 systems check complete. All crop zones healthy.",
     },
   ],
-
   lastUpdated: "2026-03-19T10:00:00.000Z",
-} satisfies MissionState;
+} satisfies Omit<MissionState, "nutrition">;
+
+export const MISSION_SEED: MissionState = {
+  ...BASE_MISSION_SEED,
+  nutrition: calculateNutrition({
+    zones: BASE_MISSION_SEED.zones,
+    resources: BASE_MISSION_SEED.resources,
+    crewSize: BASE_MISSION_SEED.crewSize,
+    missionDurationTotal: BASE_MISSION_SEED.missionDurationTotal,
+    missionDay: BASE_MISSION_SEED.missionDay,
+  }),
+};

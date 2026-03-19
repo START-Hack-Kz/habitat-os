@@ -1,7 +1,18 @@
+import type { PlannerOutput } from "../../../../shared/schemas/plannerOutput.schema";
 import { SCENARIO_CATALOG } from "../../data/scenarios.data";
-import type { ScenarioInjectRequest } from "../../schemas/scenario.schema";
-import { buildMissionSnapshot } from "../mission/mission.service";
-import { getMissionState, setMissionState } from "../mission/mission.store";
+import type {
+  ManualTweakParams,
+  ScenarioInjectRequest,
+} from "../../schemas/scenario.schema";
+import {
+  buildMissionSnapshot,
+  getCurrentMissionSnapshot,
+} from "../mission/mission.service";
+import {
+  createPlannerOutput,
+  detectNutritionRisk,
+} from "../mission/mission.monitoring";
+import { setMissionState } from "../mission/mission.store";
 import type {
   CropType,
   EventLevel,
@@ -11,6 +22,7 @@ import type {
   MissionState,
   StressSeverity,
   StressType,
+  ZoneSensors,
 } from "../mission/mission.types";
 
 type CropImpactRule = {
@@ -21,112 +33,133 @@ type CropImpactRule = {
 
 type ScenarioSeverityRule = {
   cropImpacts: Record<CropType, CropImpactRule>;
-  eventLevel: EventLevel;
+  eventType: EventLevel;
   eventMessage: string;
+  soilMoistureFactor?: number;
+  humidityDelta?: number;
+  lightParFactor?: number;
+  photoperiodDelta?: number;
+  temperatureDelta?: number;
 };
 
 const WATER_RULES: Record<FailureScenarioSeverity, ScenarioSeverityRule> = {
   mild: {
     cropImpacts: {
-      lettuce: { stressSeverity: "low", stressType: "water_stress", yieldFactor: 0.95 },
-      radish: { stressSeverity: "low", stressType: "water_stress", yieldFactor: 0.96 },
-      potato: { stressSeverity: "low", stressType: "water_stress", yieldFactor: 0.98 },
-      beans: { stressSeverity: "low", stressType: "water_stress", yieldFactor: 0.98 },
+      lettuce: { stressSeverity: "low", stressType: "water_deficit", yieldFactor: 0.95 },
+      radish: { stressSeverity: "low", stressType: "water_deficit", yieldFactor: 0.96 },
+      potato: { stressSeverity: "low", stressType: "water_deficit", yieldFactor: 0.98 },
+      beans: { stressSeverity: "low", stressType: "water_deficit", yieldFactor: 0.98 },
     },
-    eventLevel: "info",
+    eventType: "info",
     eventMessage: "Water recycling efficiency dropped to 78%. Monitor reservoir trend.",
+    soilMoistureFactor: 0.94,
+    humidityDelta: -2,
   },
   moderate: {
     cropImpacts: {
-      lettuce: { stressSeverity: "high", stressType: "water_stress", yieldFactor: 0.8 },
-      radish: { stressSeverity: "moderate", stressType: "water_stress", yieldFactor: 0.85 },
-      potato: { stressSeverity: "moderate", stressType: "water_stress", yieldFactor: 0.9 },
-      beans: { stressSeverity: "moderate", stressType: "water_stress", yieldFactor: 0.88 },
+      lettuce: { stressSeverity: "high", stressType: "water_deficit", yieldFactor: 0.8 },
+      radish: { stressSeverity: "moderate", stressType: "water_deficit", yieldFactor: 0.85 },
+      potato: { stressSeverity: "moderate", stressType: "water_deficit", yieldFactor: 0.9 },
+      beans: { stressSeverity: "moderate", stressType: "water_deficit", yieldFactor: 0.88 },
     },
-    eventLevel: "warning",
+    eventType: "warning",
     eventMessage:
       "Water recycling at 65%. Irrigation rationing active. Lettuce zone under water stress.",
+    soilMoistureFactor: 0.8,
+    humidityDelta: -4,
   },
   critical: {
     cropImpacts: {
-      lettuce: { stressSeverity: "critical", stressType: "water_stress", yieldFactor: 0.65 },
-      radish: { stressSeverity: "high", stressType: "water_stress", yieldFactor: 0.72 },
-      potato: { stressSeverity: "moderate", stressType: "water_stress", yieldFactor: 0.85 },
-      beans: { stressSeverity: "moderate", stressType: "water_stress", yieldFactor: 0.82 },
+      lettuce: { stressSeverity: "critical", stressType: "water_deficit", yieldFactor: 0.65 },
+      radish: { stressSeverity: "high", stressType: "water_deficit", yieldFactor: 0.72 },
+      potato: { stressSeverity: "moderate", stressType: "water_deficit", yieldFactor: 0.85 },
+      beans: { stressSeverity: "moderate", stressType: "water_deficit", yieldFactor: 0.82 },
     },
-    eventLevel: "critical",
+    eventType: "critical",
     eventMessage:
       "CRITICAL: Water recycling at 45%. Severe water loss. Nutrition Preservation Mode recommended.",
+    soilMoistureFactor: 0.64,
+    humidityDelta: -8,
   },
 };
 
 const ENERGY_RULES: Record<FailureScenarioSeverity, ScenarioSeverityRule> = {
   mild: {
     cropImpacts: {
-      lettuce: { stressSeverity: "none", stressType: "energy_pressure", yieldFactor: 1 },
-      radish: { stressSeverity: "none", stressType: "energy_pressure", yieldFactor: 1 },
-      potato: { stressSeverity: "none", stressType: "energy_pressure", yieldFactor: 1 },
-      beans: { stressSeverity: "none", stressType: "energy_pressure", yieldFactor: 1 },
+      lettuce: { stressSeverity: "none", stressType: "none", yieldFactor: 1 },
+      radish: { stressSeverity: "none", stressType: "none", yieldFactor: 1 },
+      potato: { stressSeverity: "none", stressType: "none", yieldFactor: 1 },
+      beans: { stressSeverity: "none", stressType: "none", yieldFactor: 1 },
     },
-    eventLevel: "info",
+    eventType: "info",
     eventMessage: "Energy reserve reduced. Lighting schedule optimisation recommended.",
+    lightParFactor: 0.95,
+    photoperiodDelta: -0.5,
   },
   moderate: {
     cropImpacts: {
-      lettuce: { stressSeverity: "low", stressType: "energy_pressure", yieldFactor: 0.94 },
-      radish: { stressSeverity: "low", stressType: "energy_pressure", yieldFactor: 0.92 },
-      potato: { stressSeverity: "moderate", stressType: "energy_pressure", yieldFactor: 0.82 },
-      beans: { stressSeverity: "low", stressType: "energy_pressure", yieldFactor: 0.88 },
+      lettuce: { stressSeverity: "low", stressType: "light_deficit", yieldFactor: 0.94 },
+      radish: { stressSeverity: "low", stressType: "light_deficit", yieldFactor: 0.92 },
+      potato: { stressSeverity: "moderate", stressType: "energy_shortage", yieldFactor: 0.82 },
+      beans: { stressSeverity: "low", stressType: "light_deficit", yieldFactor: 0.88 },
     },
-    eventLevel: "warning",
+    eventType: "warning",
     eventMessage:
       "Energy deficit. LED intensity reduced. Potato zone entering moderate stress.",
+    lightParFactor: 0.82,
+    photoperiodDelta: -1,
   },
   critical: {
     cropImpacts: {
-      lettuce: { stressSeverity: "moderate", stressType: "energy_pressure", yieldFactor: 0.85 },
-      radish: { stressSeverity: "moderate", stressType: "energy_pressure", yieldFactor: 0.82 },
-      potato: { stressSeverity: "high", stressType: "energy_pressure", yieldFactor: 0.7 },
-      beans: { stressSeverity: "moderate", stressType: "energy_pressure", yieldFactor: 0.78 },
+      lettuce: { stressSeverity: "moderate", stressType: "light_deficit", yieldFactor: 0.85 },
+      radish: { stressSeverity: "moderate", stressType: "light_deficit", yieldFactor: 0.82 },
+      potato: { stressSeverity: "high", stressType: "energy_shortage", yieldFactor: 0.7 },
+      beans: { stressSeverity: "moderate", stressType: "light_deficit", yieldFactor: 0.78 },
     },
-    eventLevel: "critical",
+    eventType: "critical",
     eventMessage:
       "CRITICAL: Severe energy deficit. All zones under stress. Nutrition Preservation Mode recommended.",
+    lightParFactor: 0.68,
+    photoperiodDelta: -2,
+    temperatureDelta: 1.5,
   },
 };
 
 const TEMPERATURE_RULES: Record<FailureScenarioSeverity, ScenarioSeverityRule> = {
   mild: {
     cropImpacts: {
-      lettuce: { stressSeverity: "low", stressType: "temperature_drift", yieldFactor: 0.96 },
-      radish: { stressSeverity: "none", stressType: "temperature_drift", yieldFactor: 1 },
-      potato: { stressSeverity: "none", stressType: "temperature_drift", yieldFactor: 1 },
-      beans: { stressSeverity: "none", stressType: "temperature_drift", yieldFactor: 1 },
+      lettuce: { stressSeverity: "low", stressType: "heat", yieldFactor: 0.96 },
+      radish: { stressSeverity: "none", stressType: "none", yieldFactor: 1 },
+      potato: { stressSeverity: "none", stressType: "none", yieldFactor: 1 },
+      beans: { stressSeverity: "none", stressType: "none", yieldFactor: 1 },
     },
-    eventLevel: "info",
+    eventType: "info",
     eventMessage: "Temperature at 24°C. Lettuce approaching heat stress threshold.",
+    humidityDelta: -2,
   },
   moderate: {
     cropImpacts: {
-      lettuce: { stressSeverity: "high", stressType: "temperature_drift", yieldFactor: 0.7 },
-      radish: { stressSeverity: "moderate", stressType: "temperature_drift", yieldFactor: 0.88 },
-      potato: { stressSeverity: "moderate", stressType: "temperature_drift", yieldFactor: 0.85 },
-      beans: { stressSeverity: "low", stressType: "temperature_drift", yieldFactor: 0.95 },
+      lettuce: { stressSeverity: "high", stressType: "heat", yieldFactor: 0.7 },
+      radish: { stressSeverity: "moderate", stressType: "heat", yieldFactor: 0.88 },
+      potato: { stressSeverity: "moderate", stressType: "heat", yieldFactor: 0.85 },
+      beans: { stressSeverity: "low", stressType: "heat", yieldFactor: 0.95 },
     },
-    eventLevel: "warning",
+    eventType: "warning",
     eventMessage:
       "Temperature at 27°C. Lettuce bolting risk active. Potato yield reduction beginning.",
+    humidityDelta: -5,
   },
   critical: {
     cropImpacts: {
-      lettuce: { stressSeverity: "critical", stressType: "temperature_drift", yieldFactor: 0.45 },
-      radish: { stressSeverity: "high", stressType: "temperature_drift", yieldFactor: 0.7 },
-      potato: { stressSeverity: "critical", stressType: "temperature_drift", yieldFactor: 0.6 },
-      beans: { stressSeverity: "moderate", stressType: "temperature_drift", yieldFactor: 0.85 },
+      lettuce: { stressSeverity: "critical", stressType: "heat", yieldFactor: 0.45 },
+      radish: { stressSeverity: "high", stressType: "heat", yieldFactor: 0.7 },
+      potato: { stressSeverity: "critical", stressType: "heat", yieldFactor: 0.6 },
+      beans: { stressSeverity: "moderate", stressType: "heat", yieldFactor: 0.85 },
     },
-    eventLevel: "critical",
+    eventType: "critical",
     eventMessage:
       "CRITICAL: Temperature at 32°C. Lettuce and potato critically stressed. Redirect resources to beans.",
+    humidityDelta: -10,
   },
 };
 
@@ -139,20 +172,19 @@ const SCENARIO_RULES: Record<
   temperature_control_failure: TEMPERATURE_RULES,
 };
 
-const NUMERIC_RESOURCE_KEYS = [
-  "waterReservoirL",
-  "waterRecyclingEfficiencyPercent",
+const RESOURCE_OVERRIDE_KEYS = [
+  "waterRecyclingEfficiency",
   "waterDailyConsumptionL",
-  "nutrientSolutionLevelPercent",
   "energyAvailableKwh",
-  "energyDailyConsumptionKwh",
-  "energyReserveHours",
-] as const satisfies ReadonlyArray<keyof MissionState["resources"]>;
-
-type NumericResourceKey = (typeof NUMERIC_RESOURCE_KEYS)[number];
+  "energyConsumptionKwhPerDay",
+] as const;
 
 function cloneMissionState(state: MissionState): MissionState {
   return structuredClone(state);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function roundToSingleDecimal(value: number): number {
@@ -179,89 +211,208 @@ function deriveZoneStatus(stressSeverity: StressSeverity) {
   return "stressed" as const;
 }
 
-function applyResourceOverrides(state: MissionState, overrides: Record<string, number>): void {
-  for (const [key, value] of Object.entries(overrides)) {
-    if (!NUMERIC_RESOURCE_KEYS.includes(key as NumericResourceKey)) {
-      continue;
-    }
+function getTemperatureOverrideKey(zoneId: string): keyof ManualTweakParams | null {
+  const suffix = zoneId.replace(/^zone-?/i, "").toUpperCase();
 
-    const resourceKey = key as NumericResourceKey;
-    state.resources[resourceKey] = value;
+  if (suffix === "A") {
+    return "temperatureZoneA";
   }
+
+  if (suffix === "B") {
+    return "temperatureZoneB";
+  }
+
+  if (suffix === "C") {
+    return "temperatureZoneC";
+  }
+
+  if (suffix === "D") {
+    return "temperatureZoneD";
+  }
+
+  return null;
 }
 
-function buildActiveScenario(
-  state: MissionState,
-  scenarioType: FailureScenarioType,
-  severity: FailureScenarioSeverity,
-  affectedZoneIds: string[],
-  injectedAt: string,
-): FailureScenario {
-  const definition = SCENARIO_CATALOG[scenarioType];
-  const parameterOverrides =
-    definition.severityEffects[severity].parameterOverrides ?? {};
+function mergeOverrides(input: {
+  scenarioType: FailureScenarioType;
+  severity: FailureScenarioSeverity;
+  customOverrides?: ScenarioInjectRequest["customOverrides"];
+}): Partial<ManualTweakParams> {
+  const definition = SCENARIO_CATALOG[input.scenarioType];
+  const baseOverrides = definition.severityEffects[input.severity].parameterOverrides;
 
   return {
-    scenarioId: `scenario-${state.missionDay}-${state.eventLog.length + 1}`,
-    type: scenarioType,
-    severity,
-    title: definition.label,
-    description: definition.description,
-    injectedAt,
-    affectedZoneIds,
-    parameterOverrides,
+    ...baseOverrides,
+    ...(input.customOverrides ?? {}),
   };
 }
 
-function appendScenarioEvent(
+function applyResourceOverrides(
   state: MissionState,
-  message: string,
-  level: EventLevel,
-  timestamp: string,
+  overrides: Partial<ManualTweakParams>,
 ): void {
-  state.eventLog.push({
-    eventId: `evt-${String(state.eventLog.length + 1).padStart(3, "0")}`,
-    timestamp,
-    missionDay: state.missionDay,
-    level,
-    message,
+  for (const key of RESOURCE_OVERRIDE_KEYS) {
+    const overrideValue = overrides[key];
+    if (overrideValue !== undefined) {
+      state.resources[key] = overrideValue;
+    }
+  }
+}
+
+function applyDirectSensorOverrides(
+  sensors: ZoneSensors,
+  zoneId: string,
+  overrides: Partial<ManualTweakParams>,
+): ZoneSensors {
+  const nextSensors = { ...sensors };
+  const temperatureOverrideKey = getTemperatureOverrideKey(zoneId);
+
+  if (temperatureOverrideKey && overrides[temperatureOverrideKey] !== undefined) {
+    nextSensors.temperature = overrides[temperatureOverrideKey] as number;
+  }
+
+  if (overrides.lightPAROverride !== undefined) {
+    nextSensors.lightPAR = overrides.lightPAROverride;
+  }
+
+  return nextSensors;
+}
+
+function applyScenarioSensorShift(input: {
+  sensors: ZoneSensors;
+  scenarioType: FailureScenarioType;
+  severityRule: ScenarioSeverityRule;
+  overrides: Partial<ManualTweakParams>;
+  zoneId: string;
+}): ZoneSensors {
+  const { scenarioType, severityRule, overrides, zoneId } = input;
+  const sensors = applyDirectSensorOverrides(input.sensors, zoneId, overrides);
+
+  if (scenarioType === "water_recycling_decline") {
+    return {
+      ...sensors,
+      soilMoisture: roundToSingleDecimal(
+        clamp(
+          sensors.soilMoisture * (severityRule.soilMoistureFactor ?? 1),
+          5,
+          100,
+        ),
+      ),
+      humidity: roundToSingleDecimal(
+        clamp(sensors.humidity + (severityRule.humidityDelta ?? 0), 10, 100),
+      ),
+      electricalConductivity: roundToSingleDecimal(
+        clamp(sensors.electricalConductivity + 0.2, 0.1, 6),
+      ),
+    };
+  }
+
+  if (scenarioType === "energy_budget_reduction") {
+    return {
+      ...sensors,
+      lightPAR: roundToSingleDecimal(
+        clamp(sensors.lightPAR * (severityRule.lightParFactor ?? 1), 0, 1200),
+      ),
+      photoperiodHours: roundToSingleDecimal(
+        clamp(sensors.photoperiodHours + (severityRule.photoperiodDelta ?? 0), 8, 24),
+      ),
+      temperature: roundToSingleDecimal(
+        clamp(sensors.temperature + (severityRule.temperatureDelta ?? 0), -10, 45),
+      ),
+    };
+  }
+
+  return {
+    ...sensors,
+    humidity: roundToSingleDecimal(
+      clamp(sensors.humidity + (severityRule.humidityDelta ?? 0), 10, 100),
+    ),
+  };
+}
+
+function buildActiveScenario(input: {
+  state: MissionState;
+  scenarioType: FailureScenarioType;
+  severity: FailureScenarioSeverity;
+  affectedZones: string[];
+  injectedAt: string;
+  parameterOverrides: Partial<ManualTweakParams>;
+}): FailureScenario {
+  const definition = SCENARIO_CATALOG[input.scenarioType];
+  const severityEffect = definition.severityEffects[input.severity];
+
+  return {
+    scenarioId: `scen-${String(input.state.eventLog.length + 1).padStart(3, "0")}`,
+    scenarioType: input.scenarioType,
+    severity: input.severity,
+    injectedAt: input.injectedAt,
+    affectedZones: input.affectedZones,
+    parameterOverrides: { ...input.parameterOverrides },
+    description: severityEffect.effectSummary,
+  };
+}
+
+function appendScenarioEvent(input: {
+  state: MissionState;
+  timestamp: string;
+  eventType: EventLevel;
+  message: string;
+  affectedZones: string[];
+}): void {
+  const zoneId = input.affectedZones.length === 1 ? input.affectedZones[0] : undefined;
+
+  input.state.eventLog.push({
+    eventId: `evt-${String(input.state.eventLog.length + 1).padStart(3, "0")}`,
+    timestamp: input.timestamp,
+    missionDay: input.state.missionDay,
+    type: input.eventType,
+    message: input.message,
+    zoneId,
   });
 }
 
-function applyScenarioEffects(
-  state: MissionState,
-  scenarioType: FailureScenarioType,
-  severity: FailureScenarioSeverity,
-  affectedZoneIds: Set<string>,
-): ScenarioSeverityRule {
-  const definition = SCENARIO_CATALOG[scenarioType];
+function applyScenarioEffects(input: {
+  state: MissionState;
+  scenarioType: FailureScenarioType;
+  severity: FailureScenarioSeverity;
+  affectedZones: Set<string>;
+  parameterOverrides: Partial<ManualTweakParams>;
+}): ScenarioSeverityRule {
+  const { state, scenarioType, severity, affectedZones, parameterOverrides } = input;
   const severityRule = SCENARIO_RULES[scenarioType][severity];
 
-  applyResourceOverrides(
-    state,
-    definition.severityEffects[severity].parameterOverrides,
-  );
+  applyResourceOverrides(state, parameterOverrides);
 
   state.zones = state.zones.map((zone) => {
-    if (!affectedZoneIds.has(zone.zoneId)) {
+    if (!affectedZones.has(zone.zoneId)) {
       return zone;
     }
 
     const cropRule = severityRule.cropImpacts[zone.cropType];
-    const projectedYieldKg = roundToSingleDecimal(
-      Math.max(0, zone.projectedYieldKg * cropRule.yieldFactor),
-    );
+    const sensors = applyScenarioSensorShift({
+      sensors: zone.sensors,
+      scenarioType,
+      severityRule,
+      overrides: parameterOverrides,
+      zoneId: zone.zoneId,
+    });
 
     return {
       ...zone,
-      projectedYieldKg,
+      sensors,
+      projectedYieldKg: roundToSingleDecimal(
+        Math.max(0, zone.projectedYieldKg * cropRule.yieldFactor),
+      ),
       status: deriveZoneStatus(cropRule.stressSeverity),
       stress: {
-        ...zone.stress,
         active: cropRule.stressSeverity !== "none",
         type: cropRule.stressType,
         severity: cropRule.stressSeverity,
-        summary: `${definition.label} applied at ${severity} severity.`,
+        boltingRisk:
+          zone.cropType === "lettuce" &&
+          cropRule.stressType === "heat" &&
+          cropRule.stressSeverity !== "none",
+        symptoms: [],
       },
     };
   });
@@ -273,37 +424,72 @@ export function applyScenarioInjection(
   sourceState: MissionState,
   input: ScenarioInjectRequest,
 ): MissionState {
+  const beforeSnapshot = buildMissionSnapshot(sourceState);
   const scenarioType = input.scenarioType;
-  const severity = input.severity ?? "moderate";
-  const state = cloneMissionState(sourceState);
-  const affectedZoneIds = new Set(
-    input.affectedZoneIds && input.affectedZoneIds.length > 0
-      ? input.affectedZoneIds
+  const severity = input.severity;
+  const state = cloneMissionState(beforeSnapshot);
+  const affectedZones = new Set(
+    input.affectedZones && input.affectedZones.length > 0
+      ? input.affectedZones
       : state.zones.map((zone) => zone.zoneId),
   );
   const timestamp = deriveTimestamp(state);
-
-  const severityRule = applyScenarioEffects(
+  const parameterOverrides = mergeOverrides({
+    scenarioType,
+    severity,
+    customOverrides: input.customOverrides,
+  });
+  const severityRule = applyScenarioEffects({
     state,
     scenarioType,
     severity,
-    affectedZoneIds,
-  );
+    affectedZones,
+    parameterOverrides,
+  });
 
-  state.activeScenario = buildActiveScenario(
+  state.activeScenario = buildActiveScenario({
     state,
     scenarioType,
     severity,
-    [...affectedZoneIds],
+    affectedZones: [...affectedZones],
+    injectedAt: timestamp,
+    parameterOverrides,
+  });
+  appendScenarioEvent({
+    state,
     timestamp,
-  );
-  appendScenarioEvent(state, severityRule.eventMessage, severityRule.eventLevel, timestamp);
+    eventType: severityRule.eventType,
+    message: severityRule.eventMessage,
+    affectedZones: [...affectedZones],
+  });
   state.lastUpdated = timestamp;
 
   return buildMissionSnapshot(state);
 }
 
-export function injectScenario(input: ScenarioInjectRequest): MissionState {
-  const nextState = applyScenarioInjection(getMissionState(), input);
-  return setMissionState(nextState);
+export function createScenarioInjectionOutput(
+  sourceState: MissionState,
+  input: ScenarioInjectRequest,
+): PlannerOutput {
+  const beforeSnapshot = buildMissionSnapshot(sourceState);
+  const missionState = applyScenarioInjection(beforeSnapshot, input);
+
+  return createPlannerOutput({
+    beforeState: beforeSnapshot,
+    missionState,
+    reason: `Scenario: ${input.scenarioType} applied`,
+  });
+}
+
+export function injectScenario(input: ScenarioInjectRequest): PlannerOutput {
+  const beforeState = getCurrentMissionSnapshot();
+  const output = createScenarioInjectionOutput(beforeState, input);
+  setMissionState(output.missionState);
+  return output;
+}
+
+export function shouldTriggerAgentFromScenario(
+  state: MissionState,
+): boolean {
+  return detectNutritionRisk(state) || state.status !== "nominal";
 }

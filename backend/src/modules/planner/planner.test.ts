@@ -1,9 +1,9 @@
 import { MISSION_SEED } from "../../data/mission.seed";
 import type { ScenarioInjectRequest } from "../../schemas/scenario.schema";
 import { getMissionState, resetMissionState } from "../mission/mission.store";
-import type { MissionState, NutritionStatus } from "../mission/mission.types";
+import type { MissionState } from "../mission/mission.types";
 import { injectScenario } from "../scenarios/scenario.service";
-import { getCurrentNutritionPreservationPlan } from "./planner.service";
+import { getCurrentNutritionPreservationExecution } from "./planner.service";
 
 let passed = 0;
 let failed = 0;
@@ -35,26 +35,27 @@ function runPlanner(input?: ScenarioInjectRequest) {
   }
 
   const storeBeforePlan = cloneMissionState(getMissionState());
-  const plan = getCurrentNutritionPreservationPlan();
+  const execution = getCurrentNutritionPreservationExecution();
   const storeAfterPlan = getMissionState();
 
   return {
-    plan,
+    execution,
     storeBeforePlan,
     storeAfterPlan,
   };
 }
 
 function forecastMeaningfullyChanged(input: {
-  before: NutritionStatus;
-  after: NutritionStatus;
+  before: MissionState["nutrition"];
+  after: MissionState["nutrition"];
 }): boolean {
   const { before, after } = input;
 
   return (
     before.dailyCaloriesProduced !== after.dailyCaloriesProduced ||
-    before.dailyProteinProducedG !== after.dailyProteinProducedG ||
-    before.micronutrientAdequacyPercent !== after.micronutrientAdequacyPercent ||
+    before.dailyProteinG !== after.dailyProteinG ||
+    before.vitaminA.coveragePercent !== after.vitaminA.coveragePercent ||
+    before.potassium.coveragePercent !== after.potassium.coveragePercent ||
     before.nutritionalCoverageScore !== after.nutritionalCoverageScore ||
     before.daysSafe !== after.daysSafe
   );
@@ -63,11 +64,14 @@ function forecastMeaningfullyChanged(input: {
 section("1. Healthy baseline");
 
 const baseline = runPlanner();
-assert(baseline.plan.mode === "normal", "baseline stays in normal mode");
-assert(baseline.plan.recommendedActions.length === 0, "baseline returns no planner actions");
+assert(baseline.execution.mode === "normal", "baseline stays in normal mode");
 assert(
-  JSON.stringify(baseline.plan.nutritionForecast.before) ===
-    JSON.stringify(baseline.plan.nutritionForecast.after),
+  baseline.execution.recommendedActions.length === 0,
+  "baseline returns no planner actions",
+);
+assert(
+  JSON.stringify(baseline.execution.beforeSnapshot.nutrition) ===
+    JSON.stringify(baseline.execution.afterSnapshot.nutrition),
   "baseline forecast is unchanged in normal mode",
 );
 assert(
@@ -81,14 +85,17 @@ const mildEnergy = runPlanner({
   scenarioType: "energy_budget_reduction",
   severity: "mild",
 });
-assert(mildEnergy.plan.mode === "normal", "mild energy degradation stays in normal mode");
 assert(
-  mildEnergy.plan.recommendedActions.length === 0,
+  mildEnergy.execution.mode === "normal",
+  "mild energy degradation stays in normal mode",
+);
+assert(
+  mildEnergy.execution.recommendedActions.length === 0,
   "mild energy degradation returns no planner actions",
 );
 assert(
-  JSON.stringify(mildEnergy.plan.nutritionForecast.before) ===
-    JSON.stringify(mildEnergy.plan.nutritionForecast.after),
+  JSON.stringify(mildEnergy.execution.beforeSnapshot.nutrition) ===
+    JSON.stringify(mildEnergy.execution.afterSnapshot.nutrition),
   "mild energy degradation keeps forecast unchanged",
 );
 
@@ -123,17 +130,18 @@ const degradedCases: Array<{
 
 for (const degradedCase of degradedCases) {
   const result = runPlanner(degradedCase.input);
-  const { before, after } = result.plan.nutritionForecast;
+  const before = result.execution.beforeSnapshot.nutrition;
+  const after = result.execution.afterSnapshot.nutrition;
 
   assert(
-    result.plan.mode === "nutrition_preservation",
+    result.execution.mode === "nutrition_preservation",
     `${degradedCase.label} enters nutrition preservation mode`,
   );
   assert(
-    result.plan.recommendedActions.length >= 1 &&
-      result.plan.recommendedActions.length <= 3,
+    result.execution.recommendedActions.length >= 1 &&
+      result.execution.recommendedActions.length <= 3,
     `${degradedCase.label} returns 1-3 actions`,
-    `got ${result.plan.recommendedActions.length}`,
+    `got ${result.execution.recommendedActions.length}`,
   );
   assert(
     forecastMeaningfullyChanged({ before, after }),

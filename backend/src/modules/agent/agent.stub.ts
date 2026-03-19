@@ -1,25 +1,23 @@
+import { CROP_PROFILES } from "../../data/cropProfiles.data";
 import type { AgentAnalyzeRequest } from "../../schemas/agent.schema";
 import { buildMissionSnapshot, getCurrentMissionSnapshot } from "../mission/mission.service";
 import { getMissionState, setMissionState } from "../mission/mission.store";
 import type { MissionState } from "../mission/mission.types";
-import {
-  createNutritionPreservationExecution,
-} from "../planner/planner.service";
-import type { PlannerAction, PlannerExecution } from "../planner/planner.types";
+import { createNutritionPreservationExecution } from "../planner/planner.service";
+import type { PlannerExecution } from "../planner/planner.types";
 import type {
-  AgentAnalysisResponse,
-  AgentConfidenceLabel,
-  AgentIncidentSeverity,
-  AgentLogEntry,
-  AgentNotificationPayload,
+  AIDecision,
+  BeforeAfterComparison,
+  NutritionSnapshot,
+  RiskLevel,
 } from "./agent.types";
 
 const WARNING_NUTRITION_SCORE_THRESHOLD = 70;
-const WARNING_DAYS_SAFE_THRESHOLD = 180;
+const WARNING_DAYS_SAFE_THRESHOLD = 90;
 
 type AgentTriggerResult = {
   detected: boolean;
-  severity: AgentIncidentSeverity;
+  riskLevel: RiskLevel;
   triggerReason: string;
 };
 
@@ -37,16 +35,33 @@ function deriveAnalysisTimestamp(state: MissionState): string {
   return new Date(parsed + 1000).toISOString();
 }
 
-function deriveIncidentId(state: MissionState, timestamp: string): string {
+function deriveDecisionId(state: MissionState, timestamp: string): string {
   const suffix = state.activeScenario?.scenarioId ?? state.status;
   const normalizedSuffix = suffix.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
 
-  return `incident-${state.missionDay}-${normalizedSuffix}-${Date.parse(timestamp)}`;
+  return `dec-${state.missionDay}-${normalizedSuffix}-${Date.parse(timestamp)}`;
+}
+
+function describePrimaryZoneAnomaly(state: MissionState): string | null {
+  const primaryZone = [...state.zones]
+    .filter((zone) => zone.stress.active || zone.status === "critical" || zone.status === "offline")
+    .sort((left, right) => {
+      return (
+        (right.stress.severity === "critical" ? 4 : right.stress.severity === "high" ? 3 : right.stress.severity === "moderate" ? 2 : right.stress.severity === "low" ? 1 : 0) -
+        (left.stress.severity === "critical" ? 4 : left.stress.severity === "high" ? 3 : left.stress.severity === "moderate" ? 2 : left.stress.severity === "low" ? 1 : 0)
+      );
+    })[0];
+
+  if (!primaryZone) {
+    return null;
+  }
+
+  return `${primaryZone.zoneId} is under ${primaryZone.stress.severity} ${primaryZone.stress.type} stress`;
 }
 
 function detectAgentTrigger(state: MissionState): AgentTriggerResult {
   const hasCriticalZone = state.zones.some((zone) => {
-    return zone.status === "critical" || zone.stress.severity === "critical";
+    return zone.status === "critical" || zone.status === "offline" || zone.stress.severity === "critical";
   });
   const hasWarningZone = state.zones.some((zone) => {
     return zone.status === "stressed" || zone.stress.severity === "high";
@@ -56,16 +71,17 @@ function detectAgentTrigger(state: MissionState): AgentTriggerResult {
     state.status === "nutrition_preservation_mode" ||
     state.status === "critical" ||
     state.nutrition.nutritionalCoverageScore < 50 ||
-    state.nutrition.daysSafe < 90 ||
+    state.nutrition.daysSafe < 30 ||
     hasCriticalZone
   ) {
+    const zoneSummary = describePrimaryZoneAnomaly(state);
     return {
       detected: true,
-      severity: "critical",
+      riskLevel: "critical",
       triggerReason:
         state.activeScenario !== null
-          ? `Active ${state.activeScenario.type} scenario is driving critical mission conditions.`
-          : "Critical mission status or nutrition risk threshold breached.",
+          ? `Scenario ${state.activeScenario.scenarioType} is driving critical greenhouse conditions.`
+          : zoneSummary ?? "Critical nutrition continuity risk threshold breached.",
     };
   }
 
@@ -76,158 +92,152 @@ function detectAgentTrigger(state: MissionState): AgentTriggerResult {
     state.nutrition.daysSafe < WARNING_DAYS_SAFE_THRESHOLD ||
     hasWarningZone
   ) {
+    const zoneSummary = describePrimaryZoneAnomaly(state);
     return {
       detected: true,
-      severity: "warning",
+      riskLevel: "high",
       triggerReason:
         state.activeScenario !== null
-          ? `Active ${state.activeScenario.type} scenario requires review.`
-          : "Warning-level mission status or elevated nutrition risk detected.",
+          ? `Scenario ${state.activeScenario.scenarioType} requires deterministic response review.`
+          : zoneSummary ?? "Warning-level mission degradation detected.",
     };
   }
 
   return {
     detected: false,
-    severity: "info",
-    triggerReason: "No abnormal mission conditions were detected.",
+    riskLevel: "low",
+    triggerReason: "Mission remains nominal. No abnormal greenhouse condition is present.",
   };
 }
 
-function deriveConfidenceLabel(
-  severity: AgentIncidentSeverity,
-  execution: PlannerExecution,
-): AgentConfidenceLabel {
-  if (severity === "critical") {
-    return "high";
-  }
-
-  if (execution.plan.mode === "nutrition_preservation" || severity === "warning") {
-    return "medium";
-  }
-
-  return "high";
+function extractNutritionSnapshot(state: MissionState): NutritionSnapshot {
+  return {
+    caloricCoveragePercent: state.nutrition.caloricCoveragePercent,
+    proteinCoveragePercent: state.nutrition.proteinCoveragePercent,
+    nutritionalCoverageScore: state.nutrition.nutritionalCoverageScore,
+    daysSafe: state.nutrition.daysSafe,
+  };
 }
 
-function buildHeadline(input: {
-  detected: boolean;
-  severity: AgentIncidentSeverity;
-  autoApply: boolean;
-  appliedActions: PlannerAction[];
-  execution: PlannerExecution;
-}): string {
-  const { detected, severity, autoApply, appliedActions, execution } = input;
+function buildComparison(before: MissionState, after: MissionState): BeforeAfterComparison {
+  const beforeSnapshot = extractNutritionSnapshot(before);
+  const afterSnapshot = extractNutritionSnapshot(after);
 
-  if (!detected) {
-    return "No abnormal mission conditions detected";
-  }
-
-  if (autoApply && appliedActions.length > 0) {
-    return "Nutrition Preservation Mode auto-applied";
-  }
-
-  if (execution.plan.mode === "nutrition_preservation") {
-    return severity === "critical"
-      ? "Critical nutrition continuity risk detected"
-      : "Nutrition preservation review recommended";
-  }
-
-  return severity === "critical"
-    ? "Critical mission anomaly detected"
-    : "Mission anomaly detected";
+  return {
+    before: beforeSnapshot,
+    after: afterSnapshot,
+    delta: {
+      caloricCoverageDelta: afterSnapshot.caloricCoveragePercent - beforeSnapshot.caloricCoveragePercent,
+      proteinCoverageDelta: afterSnapshot.proteinCoveragePercent - beforeSnapshot.proteinCoveragePercent,
+      scoreDelta: afterSnapshot.nutritionalCoverageScore - beforeSnapshot.nutritionalCoverageScore,
+      daysSafeDelta: afterSnapshot.daysSafe - beforeSnapshot.daysSafe,
+    },
+    summary:
+      beforeSnapshot.nutritionalCoverageScore === afterSnapshot.nutritionalCoverageScore &&
+      beforeSnapshot.daysSafe === afterSnapshot.daysSafe
+        ? "No deterministic intervention was required, so the nutrition forecast remains unchanged."
+        : `Applying the recommended actions moves the nutrition score from ${beforeSnapshot.nutritionalCoverageScore} to ${afterSnapshot.nutritionalCoverageScore} and shifts daysSafe from ${beforeSnapshot.daysSafe} to ${afterSnapshot.daysSafe}.`,
+  };
 }
 
-function buildSummary(input: {
+function buildZoneContributions(state: MissionState) {
+  return state.zones
+    .filter((zone) => zone.status !== "offline")
+    .map((zone) => {
+      const profile = CROP_PROFILES[zone.cropType];
+      const dailyOutputKg = zone.projectedYieldKg / Math.max(1, zone.growthCycleTotal);
+      const effectiveHundredGrams = dailyOutputKg * 10;
+      const calories = effectiveHundredGrams * profile.kcalPer100g;
+      const protein = effectiveHundredGrams * profile.proteinPer100g;
+
+      return {
+        zoneId: zone.zoneId,
+        cropType: zone.cropType,
+        role: profile.missionRole,
+        calories,
+        protein,
+      };
+    });
+}
+
+function buildCriticalNutrientDependencies(state: MissionState): string[] {
+  const contributions = buildZoneContributions(state);
+  const totalCalories = contributions.reduce((sum, entry) => sum + entry.calories, 0);
+  const totalProtein = contributions.reduce((sum, entry) => sum + entry.protein, 0);
+  const dependencies: string[] = [];
+
+  for (const entry of contributions) {
+    if (entry.cropType === "potato" && totalCalories > 0) {
+      dependencies.push(
+        `${entry.zoneId} (potato) provides ~${Math.round((entry.calories / totalCalories) * 100)}% of daily caloric output — caloric backbone`,
+      );
+    } else if (entry.cropType === "beans" && totalProtein > 0) {
+      dependencies.push(
+        `${entry.zoneId} (beans) provides ~${Math.round((entry.protein / totalProtein) * 100)}% of plant protein output — protein security`,
+      );
+    } else if (entry.cropType === "lettuce") {
+      dependencies.push(
+        `${entry.zoneId} (lettuce) stabilizes Vitamin A, Vitamin K, and folate output — micronutrient buffer`,
+      );
+    }
+  }
+
+  return dependencies;
+}
+
+function buildRiskSummary(input: {
   focus: NonNullable<AgentAnalyzeRequest["focus"]>;
-  currentState: MissionState;
+  state: MissionState;
   trigger: AgentTriggerResult;
   execution: PlannerExecution;
-  appliedActions: PlannerAction[];
+  autoApply: boolean;
 }): string {
-  const { focus, currentState, trigger, execution, appliedActions } = input;
-  const scenarioLabel = currentState.activeScenario?.title ?? "No active scenario";
+  const { focus, state, trigger, execution, autoApply } = input;
+  const primaryScenario = state.activeScenario?.scenarioType ?? "no active scenario";
 
   if (!trigger.detected) {
-    return "Mission remains nominal. No deterministic intervention is required at this time.";
+    return "Greenhouse operations remain nominal. Current nutrition production is stable and no intervention is required.";
   }
 
   if (focus === "nutrition_risk") {
-    return `Nutrition score is ${currentState.nutrition.nutritionalCoverageScore} with ${currentState.nutrition.daysSafe} safe days remaining. ${appliedActions.length > 0 ? `Applied ${appliedActions.length} preservation action(s).` : execution.plan.recommendedActions.length > 0 ? `Prepared ${execution.plan.recommendedActions.length} preservation action(s).` : "No planner action was required yet."}`;
+    return `Nutrition score is ${state.nutrition.nutritionalCoverageScore} with ${state.nutrition.daysSafe} safe days remaining. ${autoApply ? "Planner actions were auto-applied." : execution.recommendedActions.length > 0 ? "Planner actions are ready for review." : "No planner action was generated."}`;
   }
 
   if (focus === "scenario_response") {
-    return `${scenarioLabel} is the primary trigger. ${appliedActions.length > 0 ? "Planner-approved response was auto-applied." : execution.plan.recommendedActions.length > 0 ? "Planner-approved response is ready for operator review." : "No planner response was needed."}`;
+    return `${primaryScenario} is the current trigger. ${trigger.triggerReason}`;
   }
 
-  return `Mission status is ${currentState.status}. ${trigger.triggerReason} ${appliedActions.length > 0 ? "Deterministic planner actions were auto-applied." : execution.plan.recommendedActions.length > 0 ? "Deterministic planner actions are recommended." : "No planner actions are currently required."}`;
+  return `Mission status is ${state.status}. ${trigger.triggerReason}`;
 }
 
-function buildNotification(input: {
-  includeNotification: boolean;
-  detected: boolean;
-  severity: AgentIncidentSeverity;
-  headline: string;
-  summary: string;
-}): AgentNotificationPayload | null {
-  const { includeNotification, detected, severity, headline, summary } = input;
+function buildExplanation(input: {
+  state: MissionState;
+  execution: PlannerExecution;
+  autoApply: boolean;
+  trigger: AgentTriggerResult;
+}): string {
+  const { state, execution, autoApply, trigger } = input;
 
-  if (!detected && !includeNotification) {
-    return null;
+  if (execution.recommendedActions.length === 0) {
+    if (trigger.detected) {
+      return `${trigger.triggerReason}. The deterministic planner did not enter Nutrition Preservation Mode because projected calories and protein remain above the automatic intervention thresholds.`;
+    }
+
+    return "The deterministic planner found no need to enter Nutrition Preservation Mode. The greenhouse remains within acceptable nutrition continuity thresholds.";
   }
 
-  return {
-    level: severity,
-    title: headline,
-    message: summary,
-    requiresAttention: detected,
-  };
+  return `${state.activeScenario ? `${state.activeScenario.scenarioType} is the active trigger.` : "The greenhouse is under abnormal stress."} The planner protects potatoes first for calories and beans second for protein, then accepts controlled cuts to lower-priority crops. ${autoApply ? "Those actions were auto-applied to the mission state." : "Those actions are prepared for operator approval."} ${execution.explanation}`;
 }
 
-function buildLogEntries(input: {
-  incidentId: string;
-  timestamp: string;
-  severity: AgentIncidentSeverity;
-  headline: string;
-  summary: string;
-  appliedActions: PlannerAction[];
-}): AgentLogEntry[] {
-  const {
-    incidentId,
+function appendAiActionEvent(state: MissionState, timestamp: string, message: string): MissionState {
+  const nextState = cloneMissionState(state);
+  nextState.eventLog.push({
+    eventId: `evt-${String(nextState.eventLog.length + 1).padStart(3, "0")}`,
+    missionDay: nextState.missionDay,
     timestamp,
-    severity,
-    headline,
-    summary,
-    appliedActions,
-  } = input;
-
-  const entries: AgentLogEntry[] = [
-    {
-      logId: `${incidentId}-analysis`,
-      incidentId,
-      timestamp,
-      level: severity,
-      category: "analysis",
-      headline,
-      detail: summary,
-    },
-  ];
-
-  if (appliedActions.length > 0) {
-    entries.push({
-      logId: `${incidentId}-actions`,
-      incidentId,
-      timestamp,
-      level: severity,
-      category: "action",
-      headline: "Planner actions auto-applied",
-      detail: appliedActions.map((action) => action.description).join(" "),
-    });
-  }
-
-  return entries;
-}
-
-function buildCommittedState(afterSnapshot: MissionState, timestamp: string): MissionState {
-  const nextState = cloneMissionState(afterSnapshot);
+    type: "ai_action",
+    message,
+  });
   nextState.lastUpdated = timestamp;
   return buildMissionSnapshot(nextState);
 }
@@ -236,7 +246,7 @@ export function createAgentAnalysis(
   sourceState: MissionState,
   request: AgentAnalyzeRequest = {},
 ): {
-  response: AgentAnalysisResponse;
+  response: AIDecision;
   nextState: MissionState | null;
 } {
   const focus = request.focus ?? "mission_overview";
@@ -244,79 +254,57 @@ export function createAgentAnalysis(
   const execution = createNutritionPreservationExecution(currentState);
   const trigger = detectAgentTrigger(currentState);
   const timestamp = deriveAnalysisTimestamp(currentState);
-  const incidentId = deriveIncidentId(currentState, timestamp);
+  const decisionId = deriveDecisionId(currentState, timestamp);
   const shouldAutoApply =
     request.autoApply === true &&
     trigger.detected &&
-    execution.plan.mode === "nutrition_preservation" &&
-    execution.plan.recommendedActions.length > 0;
-  const appliedActions = shouldAutoApply ? execution.plan.recommendedActions : [];
-  const headline = buildHeadline({
-    detected: trigger.detected,
-    severity: trigger.severity,
-    autoApply: shouldAutoApply,
-    appliedActions,
-    execution,
-  });
-  const summary = buildSummary({
-    focus,
-    currentState,
-    trigger,
-    execution,
-    appliedActions,
-  });
-  const notification = buildNotification({
-    includeNotification: request.includeNotification === true,
-    detected: trigger.detected,
-    severity: trigger.severity,
-    headline,
-    summary,
-  });
-  const logEntries = trigger.detected
-    ? buildLogEntries({
-        incidentId,
+    execution.mode === "nutrition_preservation" &&
+    execution.recommendedActions.length > 0;
+  const appliedState = shouldAutoApply
+    ? appendAiActionEvent(
+        execution.afterSnapshot,
         timestamp,
-        severity: trigger.severity,
-        headline,
-        summary,
-        appliedActions,
-      })
-    : [];
-  const nextState = shouldAutoApply
-    ? buildCommittedState(execution.afterSnapshot, timestamp)
+        `AI analysis auto-applied ${execution.recommendedActions.length} nutrition preservation action(s).`,
+      )
     : null;
+  const comparison = buildComparison(
+    execution.beforeSnapshot,
+    shouldAutoApply && appliedState ? appliedState : execution.afterSnapshot,
+  );
 
   return {
     response: {
-      incidentId,
+      decisionId,
+      missionDay: currentState.missionDay,
       timestamp,
-      detected: trigger.detected,
-      severity: trigger.severity,
-      headline,
-      summary,
-      triggerReason: trigger.triggerReason,
-      mode: execution.plan.mode,
-      recommendedActions: execution.plan.recommendedActions,
-      appliedActions,
-      requiresAttention: trigger.detected,
-      notification,
-      logEntries,
-      beforeAfter: {
-        beforeMissionStatus: execution.beforeSnapshot.status,
-        afterMissionStatus: execution.afterSnapshot.status,
-        nutritionBefore: execution.beforeSnapshot.nutrition,
-        nutritionAfter: execution.afterSnapshot.nutrition,
-      },
-      confidenceLabel: deriveConfidenceLabel(trigger.severity, execution),
-      explanation: execution.plan.explanation,
+      riskLevel: trigger.riskLevel,
+      riskSummary: buildRiskSummary({
+        focus,
+        state: currentState,
+        trigger,
+        execution,
+        autoApply: shouldAutoApply,
+      }),
+      criticalNutrientDependencies: buildCriticalNutrientDependencies(currentState),
+      nutritionPreservationMode: execution.mode === "nutrition_preservation",
+      recommendedActions: execution.recommendedActions,
+      comparison,
+      explanation: buildExplanation({
+        state: currentState,
+        execution,
+        autoApply: shouldAutoApply,
+        trigger,
+      }),
+      triggeredByScenario: currentState.activeScenario?.scenarioId ?? null,
+      kbContextUsed: true,
     },
-    nextState,
+    nextState: appliedState,
   };
 }
 
 export function analyzeCurrentMissionWithStub(
   request: AgentAnalyzeRequest = {},
-): AgentAnalysisResponse {
+): AIDecision {
   const currentState = getCurrentMissionSnapshot();
   const analysis = createAgentAnalysis(currentState, request);
 
@@ -328,5 +316,9 @@ export function analyzeCurrentMissionWithStub(
 }
 
 export function getCurrentAgentTrigger(): AgentTriggerResult {
-  return detectAgentTrigger(getMissionState());
+  return detectAgentTrigger(getCurrentMissionSnapshot());
+}
+
+export function getCurrentMissionStateForAgent(): MissionState {
+  return buildMissionSnapshot(getMissionState());
 }

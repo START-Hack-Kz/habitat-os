@@ -1,146 +1,78 @@
+import { MISSION_SEED } from "../data/mission.seed";
+import { buildMissionSnapshot } from "../modules/mission/mission.service";
 import type { MissionState } from "../modules/mission/mission.types";
 
-export const missionStateExample = {
-  missionId: "mars-greenhouse-alpha",
-  missionDay: 87,
-  missionDurationDays: 450,
-  crewSize: 4,
-  status: "warning",
-  zones: [
-    {
-      zoneId: "zone-a",
-      name: "Leafy Greens Bay",
-      cropType: "lettuce",
-      areaM2: 10,
-      growthDay: 19,
-      growthCycleDays: 35,
-      growthProgressPercent: 54.3,
-      projectedYieldKg: 27.6,
-      allocationPercent: 22,
-      status: "stressed",
-      stress: {
-        active: true,
-        type: "temperature_drift",
-        severity: "moderate",
-        summary: "Leaf temperature is trending high and bolting risk is rising.",
+const exampleSource: MissionState = structuredClone(MISSION_SEED);
+
+exampleSource.missionDay = 128;
+exampleSource.status = "warning";
+exampleSource.zones = exampleSource.zones.map((zone) => {
+  if (zone.zoneId === "zone-A") {
+    return {
+      ...zone,
+      growthDay: 22,
+      sensors: {
+        ...zone.sensors,
+        temperature: 27,
+        humidity: 42,
       },
-    },
-    {
-      zoneId: "zone-b",
-      name: "Tuber Production Bay",
-      cropType: "potato",
-      areaM2: 18,
-      growthDay: 46,
-      growthCycleDays: 90,
-      growthProgressPercent: 51.1,
-      projectedYieldKg: 118.4,
-      allocationPercent: 38,
-      status: "healthy",
-      stress: {
-        active: false,
-        type: "none",
-        severity: "none",
-        summary: "Potato canopy is tracking within the target range.",
+    };
+  }
+
+  if (zone.zoneId === "zone-B") {
+    return {
+      ...zone,
+      growthDay: 55,
+      sensors: {
+        ...zone.sensors,
+        temperature: 27,
       },
-    },
-    {
-      zoneId: "zone-c",
-      name: "Protein Crop Bay",
-      cropType: "beans",
-      areaM2: 12,
-      growthDay: 31,
-      growthCycleDays: 60,
-      growthProgressPercent: 51.7,
-      projectedYieldKg: 29.1,
-      allocationPercent: 26,
-      status: "healthy",
-      stress: {
-        active: false,
-        type: "none",
-        severity: "none",
-        summary: "Bean vines remain stable under current lighting conditions.",
-      },
-    },
-    {
-      zoneId: "zone-d",
-      name: "Fast Harvest Bay",
-      cropType: "radish",
-      areaM2: 6,
-      growthDay: 13,
-      growthCycleDays: 25,
-      growthProgressPercent: 52,
-      projectedYieldKg: 12.4,
-      allocationPercent: 14,
-      status: "healthy",
-      stress: {
-        active: false,
-        type: "none",
-        severity: "none",
-        summary: "Radish zone is on pace for the planned harvest window.",
-      },
-    },
-  ],
-  resources: {
-    waterReservoirL: 4200,
-    waterRecyclingEfficiencyPercent: 62,
-    waterDailyConsumptionL: 138,
-    nutrientSolutionLevelPercent: 74,
-    nutrientMixStatus: "watch",
-    energyAvailableKwh: 320,
-    energyDailyConsumptionKwh: 208,
-    energyReserveHours: 37,
+    };
+  }
+
+  return zone;
+});
+exampleSource.activeScenario = {
+  scenarioId: "scen-example-001",
+  scenarioType: "temperature_control_failure",
+  severity: "moderate",
+  injectedAt: "2026-03-19T09:45:00.000Z",
+  affectedZones: exampleSource.zones.map((zone) => zone.zoneId),
+  parameterOverrides: {
+    temperatureZoneA: 27,
+    temperatureZoneB: 27,
+    temperatureZoneC: 26,
+    temperatureZoneD: 25,
   },
-  nutrition: {
-    dailyCaloriesProduced: 9620,
-    dailyCaloriesTarget: 12000,
-    caloricCoveragePercent: 80.2,
-    dailyProteinProducedG: 318,
-    dailyProteinTargetG: 450,
-    proteinCoveragePercent: 70.7,
-    micronutrientAdequacyPercent: 77.5,
-    nutritionalCoverageScore: 75,
-    daysSafe: 39,
-    trend: "declining",
+  description:
+    "Temperature control drift is pushing lettuce toward bolting risk and starting to cut potato yield.",
+};
+exampleSource.eventLog = [
+  {
+    eventId: "evt-example-003",
+    missionDay: 128,
+    timestamp: "2026-03-19T09:45:00.000Z",
+    type: "scenario_injected",
+    message:
+      "Temperature at 27C. Lettuce bolting risk active. Potato yield reduction beginning.",
   },
-  activeScenario: {
-    scenarioId: "scenario-water-recycling-001",
-    type: "water_recycling_decline",
-    severity: "critical",
-    title: "Water Recycling Decline",
-    description:
-      "Filter degradation has reduced recycling efficiency, increasing net water loss across all zones.",
-    injectedAt: "2026-03-19T09:45:00.000Z",
-    affectedZoneIds: ["zone-a", "zone-b", "zone-c", "zone-d"],
-    parameterOverrides: {
-      waterRecyclingEfficiencyPercent: 62,
-      waterDailyConsumptionL: 138,
-    },
+  {
+    eventId: "evt-example-002",
+    missionDay: 128,
+    timestamp: "2026-03-19T09:30:00.000Z",
+    type: "warning",
+    message: "Zone-A canopy temperature is above the target range.",
+    zoneId: "zone-A",
   },
-  eventLog: [
-    {
-      eventId: "evt-009",
-      timestamp: "2026-03-19T09:45:00.000Z",
-      missionDay: 87,
-      level: "critical",
-      message:
-        "Water recycling efficiency dropped to 62%. Irrigation rationing is now active.",
-    },
-    {
-      eventId: "evt-008",
-      timestamp: "2026-03-19T08:20:00.000Z",
-      missionDay: 87,
-      level: "warning",
-      message: "Zone A canopy temperature is above the target range.",
-      zoneId: "zone-a",
-    },
-    {
-      eventId: "evt-007",
-      timestamp: "2026-03-18T16:10:00.000Z",
-      missionDay: 86,
-      level: "info",
-      message: "Zone D remains on track for harvest in 12 days.",
-      zoneId: "zone-d",
-    },
-  ],
-  lastUpdated: "2026-03-19T10:00:00.000Z",
-} satisfies MissionState;
+  {
+    eventId: "evt-example-001",
+    missionDay: 127,
+    timestamp: "2026-03-18T16:10:00.000Z",
+    type: "info",
+    message: "Zone-D remains on pace for the planned harvest window.",
+    zoneId: "zone-D",
+  },
+];
+exampleSource.lastUpdated = "2026-03-19T10:00:00.000Z";
+
+export const missionStateExample = buildMissionSnapshot(exampleSource);

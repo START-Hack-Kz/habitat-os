@@ -27,10 +27,19 @@ function main(): void {
   const baselineAnalysis = analyzeCurrentMissionWithStub();
   const baselineAfter = JSON.stringify(getMissionState());
 
-  assert(baselineAnalysis.detected === false, "Baseline should not trigger agent analysis");
+  assert(baselineAnalysis.riskLevel === "low", "Baseline should remain low risk");
   assert(
-    baselineAnalysis.notification === null,
-    "Baseline should not emit a notification without includeNotification",
+    baselineAnalysis.nutritionPreservationMode === false,
+    "Baseline should not enter nutrition preservation mode",
+  );
+  assert(
+    baselineAnalysis.recommendedActions.length === 0,
+    "Baseline should not produce recommended actions",
+  );
+  assert(
+    baselineAnalysis.comparison.delta.scoreDelta === 0 &&
+      baselineAnalysis.comparison.delta.daysSafeDelta === 0,
+    "Baseline comparison should remain unchanged",
   );
   assert(
     baselineBefore === baselineAfter,
@@ -46,23 +55,30 @@ function main(): void {
   const degradedAnalysis = createAgentAnalysis(degradedBefore, {
     includeNotification: true,
   });
-  const degradedAfter = JSON.stringify(getMissionState());
+  const degradedStoreAfter = JSON.stringify(getMissionState());
 
-  assert(degradedAnalysis.response.detected === true, "Degraded state should trigger analysis");
   assert(
-    degradedAnalysis.response.notification !== null,
-    "Degraded state should return a notification payload",
+    degradedAnalysis.response.riskLevel === "critical",
+    "Degraded state should return critical AI risk level",
   );
   assert(
-    degradedAnalysis.response.logEntries.length >= 1,
-    "Degraded state should return one or more AI log entries",
+    degradedAnalysis.response.recommendedActions.length >= 1,
+    "Degraded state should return one or more recommended actions",
   );
   assert(
-    degradedAnalysis.response.appliedActions.length === 0,
-    "Non-auto-apply analysis should not claim applied actions",
+    degradedAnalysis.response.triggeredByScenario !== null,
+    "Degraded state should report the triggering scenario",
   );
   assert(
-    JSON.stringify(degradedBefore) === degradedAfter,
+    degradedAnalysis.response.comparison.delta.scoreDelta > 0,
+    "Degraded analysis should project a positive nutrition score delta",
+  );
+  assert(
+    degradedAnalysis.response.kbContextUsed === true,
+    "Stub response should report KB context usage",
+  );
+  assert(
+    JSON.stringify(degradedBefore) === degradedStoreAfter,
     "Analysis without autoApply should not mutate the mission store",
   );
 
@@ -78,8 +94,8 @@ function main(): void {
   const appliedState = getCurrentMissionSnapshot();
 
   assert(
-    autoApplyAnalysis.appliedActions.length >= 1,
-    "Auto-apply analysis should return applied actions",
+    autoApplyAnalysis.recommendedActions.length >= 1,
+    "Auto-apply analysis should still surface recommended actions",
   );
   assert(
     appliedState.status === "nutrition_preservation_mode",
@@ -87,8 +103,12 @@ function main(): void {
   );
   assert(
     appliedState.nutrition.nutritionalCoverageScore >
-      autoApplyAnalysis.beforeAfter.nutritionBefore.nutritionalCoverageScore,
+      autoApplyAnalysis.comparison.before.nutritionalCoverageScore,
     "Auto-apply should improve the stored nutrition score",
+  );
+  assert(
+    appliedState.eventLog[0]?.type === "ai_action",
+    "Auto-apply should append an ai_action event",
   );
   assert(
     JSON.stringify(MISSION_SEED) === seedBefore,
@@ -98,13 +118,15 @@ function main(): void {
   console.log(
     JSON.stringify(
       {
-        baselineDetected: baselineAnalysis.detected,
-        degradedDetected: degradedAnalysis.response.detected,
-        degradedNotification: degradedAnalysis.response.notification,
-        degradedLogEntryCount: degradedAnalysis.response.logEntries.length,
-        autoApplyActionCount: autoApplyAnalysis.appliedActions.length,
+        baselineRiskLevel: baselineAnalysis.riskLevel,
+        baselineActionCount: baselineAnalysis.recommendedActions.length,
+        degradedRiskLevel: degradedAnalysis.response.riskLevel,
+        degradedActionCount: degradedAnalysis.response.recommendedActions.length,
+        degradedComparison: degradedAnalysis.response.comparison.delta,
+        autoApplyActionCount: autoApplyAnalysis.recommendedActions.length,
         appliedMissionStatus: appliedState.status,
         appliedNutritionScore: appliedState.nutrition.nutritionalCoverageScore,
+        appliedEventType: appliedState.eventLog[0]?.type ?? null,
         baselineSeedUntouched: true,
       },
       null,
