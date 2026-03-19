@@ -304,6 +304,9 @@ export interface GreenhouseSummary {
   nutritionContinuity: number;
   waterReserve: number;
   anomaly: string;
+  zoneId: string;
+  cropType: "lettuce" | "potato" | "beans" | "radish";
+  plantCount: number;
   silhouette: "arched" | "spine" | "vault" | "spire";
 }
 

@@ -9,6 +9,9 @@ export const greenhouseCatalog: GreenhouseSummary[] = [
     nutritionContinuity: 96,
     waterReserve: 88,
     anomaly: "Nominal",
+    zoneId: "zone-B",
+    cropType: "potato",
+    plantCount: 20,
     silhouette: "arched",
   },
   {
@@ -19,6 +22,9 @@ export const greenhouseCatalog: GreenhouseSummary[] = [
     nutritionContinuity: 82,
     waterReserve: 67,
     anomaly: "Light watch",
+    zoneId: "zone-C",
+    cropType: "beans",
+    plantCount: 20,
     silhouette: "spine",
   },
   {
@@ -29,6 +35,9 @@ export const greenhouseCatalog: GreenhouseSummary[] = [
     nutritionContinuity: 91,
     waterReserve: 79,
     anomaly: "Stable",
+    zoneId: "zone-A",
+    cropType: "lettuce",
+    plantCount: 20,
     silhouette: "vault",
   },
   {
@@ -39,6 +48,9 @@ export const greenhouseCatalog: GreenhouseSummary[] = [
     nutritionContinuity: 74,
     waterReserve: 52,
     anomaly: "Pressure fault",
+    zoneId: "zone-D",
+    cropType: "radish",
+    plantCount: 20,
     silhouette: "spire",
   },
 ];

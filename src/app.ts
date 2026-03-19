@@ -11,6 +11,7 @@ import {
   resetSimulation,
 } from "./data/api";
 import { getGreenhouseById, greenhouseCatalog } from "./data/greenhouses";
+import { buildHabitatOperationsModel, type HabitatOperationsModel } from "./data/habitatOperations";
 import { getZoneCompositionProfile } from "./data/zoneComposition";
 import type {
   AlertLevel,
@@ -48,6 +49,7 @@ interface AppState {
   activeGreenhouseId: string;
   activeTab: TabId;
   selectedZoneId: string;
+  selectedOverviewHabitatId: string;
   selectedScenarioType: BackendScenarioCatalogItem["scenarioType"] | "";
   mission: BackendMissionState | null;
   scenarios: BackendScenarioCatalogItem[];
@@ -142,6 +144,7 @@ export function renderApp(root: HTMLDivElement): void {
     activeGreenhouseId: initialRoute.greenhouseId,
     activeTab: "overview",
     selectedZoneId: "",
+    selectedOverviewHabitatId: initialRoute.greenhouseId,
     selectedScenarioType: "",
     mission: null,
     scenarios: [],
@@ -211,6 +214,7 @@ export function renderApp(root: HTMLDivElement): void {
     const tabButton = target.closest<HTMLElement>("[data-tab-target]");
     const homeTrigger = target.closest<HTMLElement>("[data-route-home]");
     const zoneTrigger = target.closest<HTMLElement>("[data-zone-select]");
+    const habitatTabTrigger = target.closest<HTMLElement>("[data-overview-habitat]");
     const injectTrigger = target.closest<HTMLElement>("[data-scenario-inject]");
     const resetTrigger = target.closest<HTMLElement>("[data-scenario-reset]");
     const plannerRefresh = target.closest<HTMLElement>("[data-planner-refresh]");
@@ -247,6 +251,17 @@ export function renderApp(root: HTMLDivElement): void {
       if (zoneId) {
         state.selectedZoneId = zoneId;
 
+        draw();
+      }
+
+      return;
+    }
+
+    if (habitatTabTrigger) {
+      const greenhouseId = habitatTabTrigger.dataset.overviewHabitat ?? "";
+
+      if (getGreenhouseById(greenhouseId)) {
+        state.selectedOverviewHabitatId = greenhouseId;
         draw();
       }
 
@@ -296,6 +311,7 @@ export function renderApp(root: HTMLDivElement): void {
     const route = parseRoute(window.location.pathname);
     state.view = route.view;
     state.activeGreenhouseId = route.greenhouseId;
+    state.selectedOverviewHabitatId = route.greenhouseId;
     draw();
   });
 
@@ -477,6 +493,7 @@ export function renderApp(root: HTMLDivElement): void {
   function navigateToGreenhouse(greenhouseId: string): void {
     state.view = "detail";
     state.activeGreenhouseId = greenhouseId;
+    state.selectedOverviewHabitatId = greenhouseId;
     window.history.pushState({}, "", `/greenhouse/${encodeURIComponent(greenhouseId)}`);
     draw();
   }
@@ -510,21 +527,17 @@ function getActiveGreenhouse(state: AppState): GreenhouseSummary {
 function renderLandingShell(state: AppState): string {
   return `
     <div class="landing-frame">
-      ${renderGreenhouseLanding(greenhouseCatalog, state.mission?.missionDay ?? null)}
+      ${renderGreenhouseLanding(greenhouseCatalog, state.mission?.missionDay ?? null, state.mission)}
     </div>
   `;
 }
 
-function renderGreenhouseContextBar(greenhouse: GreenhouseSummary): string {
+function renderGreenhouseContextBar(_greenhouse: GreenhouseSummary): string {
   return `
     <div class="greenhouse-context">
       <button class="greenhouse-context__back" type="button" data-route-home="true">
         Return to habitat array
       </button>
-      <div class="greenhouse-context__identity">
-        <span class="greenhouse-context__code mono">${escapeHtml(greenhouse.code)}</span>
-        <span class="greenhouse-context__name">${escapeHtml(greenhouse.name)}</span>
-      </div>
     </div>
   `;
 }
@@ -536,7 +549,7 @@ function renderPage(state: AppState): string {
 
   switch (state.activeTab) {
     case "overview":
-      return renderOverview(state.mission, state.planner);
+      return renderOverview(state.mission, state.planner, state.selectedOverviewHabitatId);
     case "crops":
       return renderCrops(state.mission, state.selectedZoneId);
     case "resources":
@@ -555,15 +568,24 @@ function renderPage(state: AppState): string {
         state.companionBusy,
       );
     default:
-      return renderOverview(state.mission, state.planner);
+      return renderOverview(state.mission, state.planner, state.selectedOverviewHabitatId);
   }
 }
 
 function renderOverview(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
+  selectedHabitatId: string,
 ): string {
   const metrics = buildOverviewMetrics(mission);
+  const habitats = greenhouseCatalog.map((greenhouse) =>
+    buildHabitatOperationsModel(
+      greenhouse,
+      mission.zones.find((zone) => zone.zoneId === greenhouse.zoneId),
+    ),
+  );
+  const selectedHabitat =
+    habitats.find((habitat) => habitat.habitatId === selectedHabitatId) ?? habitats[0];
 
   return `
     ${renderMissionAlert(mission)}
@@ -573,99 +595,71 @@ function renderOverview(
         ${metrics.map((item) => renderMetricTile(item)).join("")}
       </div>
 
-      <div class="overview-middle">
+      <div class="overview-hero">
         ${renderPanel({
-          title: "Zone Operations",
+          title: "Habitat Operations",
           dotColor: "var(--aero-blue)",
           rightSlot: renderStatusBadge(
-            mission.activeScenario ? "Scenario Live" : "Nominal Watch",
-            missionTone(mission),
+            `${selectedHabitat.cropLabel} lane active`,
+            selectedHabitat.statusTone,
           ),
+          children: renderHabitatOperationsWindow(selectedHabitat, habitats),
+        })}
+      </div>
+
+      <div class="overview-support-row overview-support-row--triple">
+        ${renderPanel({
+          title: "Resource Snapshot",
+          dotColor: "var(--mars-orange)",
           children: `
-            <div class="overview-zone-ops">
-              <div class="overview-zone-ops__summary">
-                <div class="overview-zone-ops__summary-copy">
-                  <p class="overview-zone-ops__eyebrow">Live greenhouse state</p>
-                  <p class="overview-zone-ops__text">
-                    ${mission.activeScenario
-                      ? `${escapeHtml(mission.activeScenario.title)} is active across ${mission.activeScenario.affectedZoneIds.join(", ")}.`
-                      : "All four crop bays are reading from the canonical mission snapshot."}
-                  </p>
-                </div>
-                <div class="overview-zone-ops__summary-stats">
-                  ${renderStatusBadge(
-                    `${mission.zones.filter((zone) => zone.stress.active).length} stressed`,
-                    mission.zones.some((zone) => zone.stress.active) ? "CAU" : "NOM",
-                  )}
-                  ${renderStatusBadge(
-                    `${mission.zones.filter((zone) => zone.status === "critical").length} critical`,
-                    mission.zones.some((zone) => zone.status === "critical") ? "ABT" : "NOM",
-                  )}
-                </div>
+            <div class="overview-env-grid">
+              ${buildResourceTiles(mission).map((tile) => renderResourceTile(tile)).join("")}
+            </div>
+            <div class="overview-resource-footer">
+              ${renderStatusBadge(
+                `Water ${mission.resources.waterDaysRemaining.toFixed(1)} d`,
+                toneFromPercent(mission.resources.waterRecyclingEfficiencyPercent, 85, 65),
+              )}
+              ${renderStatusBadge(
+                `Energy ${mission.resources.energyDaysRemaining.toFixed(1)} d`,
+                toneFromEnergyReserve(mission.resources.energyReserveHours),
+              )}
+              ${renderStatusBadge(
+                `Solar ${mission.resources.solarGenerationKwhPerDay} kWh/d`,
+                mission.resources.solarGenerationKwhPerDay >=
+                  mission.resources.energyDailyConsumptionKwh * 0.9
+                  ? "NOM"
+                  : "CAU",
+              )}
+            </div>
+          `,
+        })}
+
+        ${renderPanel({
+          title: "Crew Nutrition",
+          dotColor: "var(--nom)",
+          children: `
+            <div class="overview-nutrition-panel">
+              <div class="overview-nutrition-mini">
+                ${buildNutritionMiniRows(mission).map((row) => renderOverviewNutritionRow(row)).join("")}
               </div>
-              <div class="overview-zone-grid">
-                ${mission.zones
-                  .map((zone) => renderZoneOperationsCard(zone, false, false))
+              <div class="overview-micro-grid">
+                ${buildMicronutrientMiniRows(mission)
+                  .map((item) => renderMicronutrientCell(item))
                   .join("")}
               </div>
             </div>
           `,
         })}
 
-        <div class="overview-stack">
-          ${renderPanel({
-            title: "Resource Snapshot",
-            dotColor: "var(--mars-orange)",
-            children: `
-              <div class="overview-env-grid">
-                ${buildResourceTiles(mission).map((tile) => renderResourceTile(tile)).join("")}
-              </div>
-              <div class="overview-resource-footer">
-                ${renderStatusBadge(
-                  `Water ${mission.resources.waterDaysRemaining.toFixed(1)} d`,
-                  toneFromPercent(mission.resources.waterRecyclingEfficiencyPercent, 85, 65),
-                )}
-                ${renderStatusBadge(
-                  `Energy ${mission.resources.energyDaysRemaining.toFixed(1)} d`,
-                  toneFromEnergyReserve(mission.resources.energyReserveHours),
-                )}
-                ${renderStatusBadge(
-                  `Solar ${mission.resources.solarGenerationKwhPerDay} kWh/d`,
-                  mission.resources.solarGenerationKwhPerDay >=
-                    mission.resources.energyDailyConsumptionKwh * 0.9
-                    ? "NOM"
-                    : "CAU",
-                )}
-              </div>
-            `,
-          })}
-
-          ${renderPanel({
-            title: "Crew Nutrition",
-            dotColor: "var(--nom)",
-            children: `
-              <div class="overview-nutrition-panel">
-                <div class="overview-nutrition-mini">
-                  ${buildNutritionMiniRows(mission).map((row) => renderOverviewNutritionRow(row)).join("")}
-                </div>
-                <div class="overview-micro-grid">
-                  ${buildMicronutrientMiniRows(mission)
-                    .map((item) => renderMicronutrientCell(item))
-                    .join("")}
-                </div>
-              </div>
-            `,
-          })}
-
-          ${renderPanel({
-            title: "Incident / Planner",
-            dotColor: "var(--cau)",
-            children: renderIncidentPanel(mission, planner),
-          })}
-        </div>
+        ${renderPanel({
+          title: "Incident / Planner",
+          dotColor: "var(--cau)",
+          children: renderIncidentPanel(mission, planner),
+        })}
       </div>
 
-      <div class="overview-bottom">
+      <div class="overview-support-row overview-support-row--double">
         ${renderPanel({
           title: "Recent Mission Log",
           dotColor: "var(--cau)",
@@ -699,6 +693,159 @@ function renderOverview(
       </div>
     </section>
   `;
+}
+
+function renderHabitatOperationsWindow(
+  selectedHabitat: HabitatOperationsModel,
+  habitats: HabitatOperationsModel[],
+): string {
+  const dogPath = selectedHabitat.dogPath
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const dogPathId = `habitat-dog-route-${selectedHabitat.habitatId}`;
+
+  return `
+    <div class="habitat-window">
+      <div class="habitat-window__tabs" role="tablist" aria-label="Habitat operations tabs">
+        ${habitats
+          .map(
+            (habitat) => `
+              <button
+                type="button"
+                class="habitat-window__tab ${habitat.habitatId === selectedHabitat.habitatId ? "is-active" : ""}"
+                data-overview-habitat="${escapeHtml(habitat.habitatId)}"
+              >
+                <span class="habitat-window__tab-code mono">${escapeHtml(habitat.habitatCode)}</span>
+                <span class="habitat-window__tab-name">${escapeHtml(habitat.habitatName)}</span>
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+
+      <div class="habitat-window__frame">
+        <div class="habitat-window__header">
+          <div class="habitat-window__identity">
+            <p class="habitat-window__eyebrow mono">Connected habitat operations</p>
+            <h2 class="habitat-window__title">${escapeHtml(selectedHabitat.habitatName)}</h2>
+            <p class="habitat-window__subtitle">
+              ${escapeHtml(selectedHabitat.cropLabel)} zone · ${selectedHabitat.plantCount} plants · ${escapeHtml(selectedHabitat.zoneId)}
+            </p>
+          </div>
+          <div class="habitat-window__header-status">
+            ${renderStatusBadge(selectedHabitat.statusLabel, selectedHabitat.statusTone)}
+            ${renderStatusBadge(`${selectedHabitat.growthProgressPercent}% growth`, selectedHabitat.statusTone)}
+          </div>
+        </div>
+
+        <div class="habitat-window__stage">
+          <div class="habitat-window__lane-map" aria-hidden="true">
+            <div class="habitat-window__lane habitat-window__lane--vertical habitat-window__lane--left"></div>
+            <div class="habitat-window__lane habitat-window__lane--vertical habitat-window__lane--center"></div>
+            <div class="habitat-window__lane habitat-window__lane--vertical habitat-window__lane--right"></div>
+            <div class="habitat-window__lane habitat-window__lane--horizontal habitat-window__lane--upper"></div>
+            <div class="habitat-window__lane habitat-window__lane--horizontal habitat-window__lane--mid"></div>
+            <div class="habitat-window__lane habitat-window__lane--horizontal habitat-window__lane--lower"></div>
+            <div class="habitat-window__lane habitat-window__lane--horizontal habitat-window__lane--bottom"></div>
+          </div>
+
+          <div class="habitat-window__plants">
+            ${selectedHabitat.plants.map((plant) => renderHabitatPlantBox(plant)).join("")}
+          </div>
+
+          <svg class="habitat-window__dog-path" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <path id="${dogPathId}" class="habitat-window__dog-route" d="${dogPath}" pathLength="100"></path>
+            <g class="habitat-window__dog-runner">
+              <line class="habitat-window__dog-tail-glow" x1="-3.25" y1="0" x2="-1.1" y2="0"></line>
+              <line class="habitat-window__dog-tail" x1="-2.45" y1="0" x2="-0.95" y2="0"></line>
+              <g class="habitat-window__dog-icon">
+                <ellipse cx="0" cy="0" rx="1.05" ry="0.55"></ellipse>
+                <circle cx="1.04" cy="-0.08" r="0.38"></circle>
+                <polygon points="0.98,-0.42 0.8,-0.92 1.24,-0.58"></polygon>
+                <line x1="-0.42" y1="0.4" x2="-0.62" y2="0.95"></line>
+                <line x1="0.24" y1="0.4" x2="0.06" y2="0.95"></line>
+                <line x1="-1.06" y1="-0.12" x2="-1.42" y2="-0.62"></line>
+              </g>
+              <animateMotion dur="18s" repeatCount="indefinite" rotate="auto">
+                <mpath href="#${dogPathId}" />
+              </animateMotion>
+            </g>
+          </svg>
+        </div>
+
+        <div class="habitat-window__footer">
+          <div class="habitat-window__footer-metric">
+            <span class="habitat-window__footer-label mono">Cycle</span>
+            <span class="habitat-window__footer-value mono">${selectedHabitat.growthDay}/${selectedHabitat.growthCycleDays} d</span>
+          </div>
+          <div class="habitat-window__footer-metric">
+            <span class="habitat-window__footer-label mono">Projected yield</span>
+            <span class="habitat-window__footer-value mono">${selectedHabitat.projectedYieldKg.toFixed(1)} kg</span>
+          </div>
+          <div class="habitat-window__footer-metric">
+            <span class="habitat-window__footer-label mono">Allocation</span>
+            <span class="habitat-window__footer-value mono">${selectedHabitat.allocationPercent}%</span>
+          </div>
+          <div class="habitat-window__footer-note">${escapeHtml(selectedHabitat.summary)}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderHabitatPlantBox(plant: HabitatOperationsModel["plants"][number]): string {
+  return `
+    <div
+      class="habitat-plant habitat-plant--${plant.tone.toLowerCase()}"
+      style="left:${plant.x}%; top:${plant.y}%"
+      title="${escapeHtml(plant.label)} · growth ${plant.growthPercent}% · water ${plant.waterPercent}%"
+    >
+      <span class="habitat-plant__head">
+        <span class="habitat-plant__code mono">${escapeHtml(plant.code)}</span>
+        <span class="habitat-plant__icon" aria-hidden="true">${renderPlantIcon(plant.cropType)}</span>
+      </span>
+      <span class="habitat-plant__label">${escapeHtml(plant.label)}</span>
+    </div>
+  `;
+}
+
+function renderPlantIcon(cropType: HabitatOperationsModel["plants"][number]["cropType"]): string {
+  switch (cropType) {
+    case "potato":
+      return `
+        <svg viewBox="0 0 24 24" role="presentation">
+          <ellipse cx="12" cy="13" rx="6.5" ry="4.8"></ellipse>
+          <circle cx="9" cy="12" r="0.8"></circle>
+          <circle cx="13.4" cy="14.3" r="0.7"></circle>
+          <path d="M12 8.2c0-2 1.5-3.3 3.4-4.2"></path>
+          <path d="M12.1 8.4c-1.6-1.8-3.5-2.3-5.1-2.4"></path>
+        </svg>
+      `;
+    case "beans":
+      return `
+        <svg viewBox="0 0 24 24" role="presentation">
+          <path d="M8.4 7.2c3.9-2.3 8 .6 7.1 4.6-.7 3.3-4.8 5.5-8.4 4.3-3.1-1.1-3.7-5.3 1.3-8.9Z"></path>
+          <path d="M10 9.3c2.4 1.2 3.7 2.6 4.7 4.8"></path>
+        </svg>
+      `;
+    case "radish":
+      return `
+        <svg viewBox="0 0 24 24" role="presentation">
+          <path d="M12 8.8c3.1 0 5.2 1.9 5.2 4.6 0 3.3-2.5 5.8-5.2 5.8s-5.2-2.5-5.2-5.8c0-2.7 2.1-4.6 5.2-4.6Z"></path>
+          <path d="M11.8 8.8V5.4"></path>
+          <path d="M11.9 5.8c-2.1-.2-3.6-1.2-4.6-3"></path>
+          <path d="M12.2 5.8c1.7-.3 3.3-1.1 4.5-3"></path>
+          <path d="M11.9 19.1v2.4"></path>
+        </svg>
+      `;
+    default:
+      return `
+        <svg viewBox="0 0 24 24" role="presentation">
+          <path d="M12 18.5c-3.7 0-6.3-2.5-6.3-6.1 0-4.8 4.3-7.8 10.6-8-0.1 6.2-3 14.1-10.1 14.1Z"></path>
+          <path d="M11.2 18.2c1.5-4.4 3-8.4 6.1-11.9"></path>
+        </svg>
+      `;
+  }
 }
 
 function renderCrops(mission: BackendMissionState, selectedZoneId: string): string {
@@ -2456,7 +2603,7 @@ function renderCropHealthCard(zone: BackendCropZone, isSelected: boolean): strin
         <span class="crop-health-card__harvest mono">day ${zone.growthDay}/${zone.growthCycleDays}</span>
       </div>
       <div class="ui-kpi__bar">
-        <span style="width:${zone.allocationPercent}%; background:${zoneTone(zone) === "ABT" ? "var(--abt)" : "var(--aero-blue)"}"></span>
+        <span style="width:${zone.growthProgressPercent}%; background:${zoneTone(zone) === "ABT" ? "var(--abt)" : "var(--aero-blue)"}"></span>
       </div>
       <div class="crop-health-card__foot">
         <span class="mono">${zone.allocationPercent}% alloc</span>

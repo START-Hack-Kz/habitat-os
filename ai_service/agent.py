@@ -398,11 +398,8 @@ def _overlay_llm_fields(
     *,
     base: AIDecision,
     llm_data: dict,
-<<<<<<< HEAD
-=======
     kb_context_used: bool,
     preserve_emergency_narrative: bool = False,
->>>>>>> 3d97219 (feat: amazon bedrock)
 ) -> AIDecision:
     """
     Merge LLM-authored narrative fields onto the deterministic base decision.
@@ -478,9 +475,7 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
         # Strands returns an AgentResult; get the text content
         response_text = str(result)
         data = _extract_json(response_text)
-<<<<<<< HEAD
         return _overlay_llm_fields(base=fallback_decision, llm_data=data)
-=======
         preserve_emergency_narrative = (
             mission.status != "nominal"
             or mission.activeScenario is not None
@@ -492,7 +487,6 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
             kb_context_used=kb_was_used(),
             preserve_emergency_narrative=preserve_emergency_narrative,
         )
->>>>>>> 3d97219 (feat: amazon bedrock)
     except Exception as e:
         # Fallback: deterministic analysis from tool outputs
         print(f"[agent] LLM unavailable ({type(e).__name__}: {e}), using deterministic fallback")
