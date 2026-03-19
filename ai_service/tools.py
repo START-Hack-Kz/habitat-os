@@ -11,6 +11,17 @@ from strands import tool
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3001")
 _client = httpx.Client(base_url=BACKEND_URL, timeout=10.0)
+KB_MCP_URL = os.getenv(
+    "KB_MCP_URL",
+    "https://kb-start-hack-gateway-buyjtibfpg.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp",
+)
+KB_MCP_TOOL_NAME = os.getenv(
+    "KB_MCP_TOOL_NAME",
+    "kb-start-hack-target___knowledge_base_retrieve",
+)
+KB_MCP_AUTH_TOKEN = os.getenv("KB_MCP_AUTH_TOKEN")
+KB_MCP_MAX_RESULTS = int(os.getenv("KB_MCP_MAX_RESULTS", "5"))
+_kb_context_used = False
 
 
 def _get(path: str) -> dict:
@@ -23,6 +34,66 @@ def _post(path: str, body: dict | None = None) -> dict:
     resp = _client.post(path, json=body or {})
     resp.raise_for_status()
     return resp.json()
+
+
+def reset_kb_usage() -> None:
+    global _kb_context_used
+    _kb_context_used = False
+
+
+def kb_was_used() -> bool:
+    return _kb_context_used
+
+
+def _mcp_headers() -> dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if KB_MCP_AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {KB_MCP_AUTH_TOKEN}"
+    return headers
+
+
+def _mcp_call(method: str, params: dict) -> dict:
+    payload = {
+        "jsonrpc": "2.0",
+        "id": f"mcp-{method}",
+        "method": method,
+        "params": params,
+    }
+    with httpx.Client(timeout=20.0, headers=_mcp_headers()) as client:
+        resp = client.post(KB_MCP_URL, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"MCP error for {method}: {data['error']}")
+    return data["result"]
+
+
+def _extract_mcp_text_content(result: dict) -> str:
+    contents = result.get("content", [])
+    text_parts: list[str] = []
+    for item in contents:
+        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+            text_parts.append(item["text"])
+    return "\n".join(text_parts).strip()
+
+
+def _parse_gateway_kb_result(result_text: str) -> dict:
+    """
+    AgentCore Gateway tools often wrap the useful payload as:
+    {"statusCode":200,"body":"{...json...}"}
+    Normalize that into the actual KB response body.
+    """
+    outer = json.loads(result_text)
+    body = outer.get("body")
+    if isinstance(body, str):
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return {"rawBody": body}
+    return outer
 
 
 @tool
@@ -164,34 +235,58 @@ def locateDashboardSection(topic: str) -> str:
 def searchKnowledgeBase(query: str) -> str:
     """
     Search the Mars Greenhouse knowledge base for crop science, operational procedures,
-    and mission protocols. Currently returns stub data — KB integration is planned.
+    and mission protocols.
+
+    This tool is explanation-only:
+    - use backend tools for current mission facts and live values
+    - use this KB for scientific rationale, thresholds, crop behavior, and mitigation logic
 
     Args:
         query: The knowledge base query, e.g. 'lettuce bolting threshold',
                'water recycling efficiency target', 'potato heat stress'
     """
-    # Stub: return grounded static KB facts relevant to common queries
-    query_lower = query.lower()
+    global _kb_context_used
+    _kb_context_used = True
 
-    kb_facts = {
-        "bolting": "Lettuce bolts (premature flowering) when temperature exceeds 25°C or photoperiod exceeds 16h. Bolting destroys the harvest — the plant becomes bitter and inedible. Immediate temperature reduction and photoperiod adjustment are required.",
-        "water recycling": "Target water recycling efficiency is >85–95%. Below 85% triggers warning; below 70% requires immediate rationing. The closed-loop system recycles irrigation runoff and transpiration condensate.",
-        "lettuce": "Lettuce (zone-A) is the micronutrient stabilizer — provides Vitamin A, K, and folate. Optimal temp 18–22°C, heat stress threshold 25°C. High water demand. Growth cycle 30–35 days.",
-        "potato": "Potato (zone-B) is the caloric backbone — provides ~60% of crew calories. Optimal temp 15–20°C, heat stress threshold 26°C. Moderate water demand. Growth cycle 85–95 days.",
-        "beans": "Beans (zone-C) are the protein security crop — provides 100% of plant protein. Optimal temp 18–24°C, heat stress threshold 30°C. Most heat-tolerant crop. Growth cycle 55–65 days.",
-        "radish": "Radish (zone-D) is the fast buffer — quick 20–28 day cycle, provides Vitamin C. Optimal temp 15–20°C. Low caloric contribution but important for morale and micronutrients.",
-        "nutrition preservation": "Nutrition Preservation Mode (NPM) activates when nutritional coverage score drops below 70 or days-safe drops below 30. The planner reallocates water and energy toward caloric and protein crops first.",
-        "days safe": "Days Safe is the key mission metric: how many days the crew stays adequately fed at current production rates. Target >90 days. Below 30 days triggers NPM.",
-        "temperature control": "HVAC failure causes temperature drift. Heat stress thresholds: lettuce 25°C, potato 26°C, radish 26°C, beans 30°C. Gradual recovery prevents thermal shock.",
-        "energy budget": "Greenhouse energy budget covers LED lighting, HVAC, irrigation pumps, and monitoring. Solar generation target covers ~95% of daily consumption. Deficit triggers lighting reduction in low-priority zones.",
-    }
+    try:
+        result = _mcp_call(
+            "tools/call",
+            {
+                "name": KB_MCP_TOOL_NAME,
+                "arguments": {
+                    "query": query,
+                    "max_results": KB_MCP_MAX_RESULTS,
+                },
+            },
+        )
+        result_text = _extract_mcp_text_content(result)
+        normalized = _parse_gateway_kb_result(result_text) if result_text else {}
+        chunks = normalized.get("retrieved_chunks", [])
+        summarized_chunks = []
+        for chunk in chunks[:KB_MCP_MAX_RESULTS]:
+            if not isinstance(chunk, dict):
+                continue
+            content = chunk.get("content")
+            if not isinstance(content, str):
+                continue
+            summarized_chunks.append({
+                "content": content[:1500],
+                "metadata": chunk.get("metadata", {}),
+            })
 
-    for key, fact in kb_facts.items():
-        if key in query_lower:
-            return json.dumps({"query": query, "result": fact, "source": "Mars Greenhouse KB (stub)"})
-
-    return json.dumps({
-        "query": query,
-        "result": "No specific KB entry found for this query. Use getMissionState() for current values.",
-        "source": "Mars Greenhouse KB (stub)",
-    })
+        return json.dumps({
+            "query": query,
+            "toolName": KB_MCP_TOOL_NAME,
+            "source": "AgentCore Gateway MCP Knowledge Base",
+            "resultCount": len(summarized_chunks),
+            "retrievedChunks": summarized_chunks,
+        })
+    except Exception as exc:
+        return json.dumps({
+            "query": query,
+            "toolName": KB_MCP_TOOL_NAME,
+            "source": "AgentCore Gateway MCP Knowledge Base",
+            "error": str(exc),
+            "resultCount": 0,
+            "retrievedChunks": [],
+        })

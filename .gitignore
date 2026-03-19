@@ -16,3 +16,5 @@ node_modules
 # AI service
 ai_service/.env
 ai_service/.venv/
+ai_service/__pycache__/
+*.pyc
