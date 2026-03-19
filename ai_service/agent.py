@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 
 from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
-from strands.models import BedrockModel
 from strands.tools.mcp.mcp_client import MCPClient
 
 from models import (
@@ -31,41 +30,15 @@ from tools import (
 
 def _get_model_limits() -> tuple[int, float]:
     """Read shared generation settings from env."""
-    max_tokens = int(os.getenv("AI_MAX_TOKENS", "1200"))
+    max_tokens = int(os.getenv("AI_MAX_TOKENS", "5000"))
     temperature = float(os.getenv("AI_TEMPERATURE", "0.2"))
     return max_tokens, temperature
-
-
-def _get_model_provider() -> str:
-    """
-    Resolve the preferred model provider.
-
-    Priority:
-    1. explicit MODEL_PROVIDER
-    2. Bedrock if AWS-oriented env is present
-    3. direct provider fallbacks
-    """
-    explicit = os.getenv("MODEL_PROVIDER")
-    if explicit:
-        return explicit.strip().lower()
-
-    if os.getenv("BEDROCK_MODEL_ID") or os.getenv("AWS_REGION"):
-        return "bedrock"
-    if os.getenv("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    if os.getenv("OPENAI_API_KEY"):
-        return "openai"
-    return "bedrock"
 
 
 def _build_model():
     """Build the Strands model from environment config."""
     max_tokens, temperature = _get_model_limits()
-    provider = _get_model_provider()
-
-    if provider == "anthropic":
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            raise RuntimeError("MODEL_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set")
+    if os.getenv("ANTHROPIC_API_KEY"):
         from strands.models import AnthropicModel  # type: ignore
         return AnthropicModel(
             client_args={
@@ -78,9 +51,7 @@ def _build_model():
             },
         )
 
-    if provider == "openai":
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError("MODEL_PROVIDER=openai but OPENAI_API_KEY is not set")
+    if os.getenv("OPENAI_API_KEY"):
         from strands.models import OpenAIModel  # type: ignore
         return OpenAIModel(
             model_id=os.getenv("OPENAI_MODEL_ID", "gpt-4o-mini"),
@@ -93,17 +64,7 @@ def _build_model():
             },
         )
 
-    if provider != "bedrock":
-        raise RuntimeError(f"Unsupported MODEL_PROVIDER={provider}")
-
-    region = os.getenv("AWS_REGION", "us-east-1")
-    model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-haiku-4-5-20251001-v1:0")
-    return BedrockModel(
-        model_id=model_id,
-        region_name=region,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
+    raise RuntimeError("No supported direct AI provider is configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.")
 
 
 _LOCAL_TOOLS = [
@@ -114,7 +75,15 @@ _LOCAL_TOOLS = [
     locateDashboardSection,
     searchKnowledgeBase,
 ]
+_LOCAL_ANALYZE_TOOLS = [
+    getMissionState,
+    getRecentMissionLog,
+    runPlannerAnalysis,
+    getScenarioCatalog,
+    locateDashboardSection,
+]
 _LOCAL_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
+_LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS = [locateDashboardSection]
 OPS_MCP_URL = os.getenv("OPS_MCP_URL")
 OPS_MCP_AUTH_TOKEN = os.getenv("OPS_MCP_AUTH_TOKEN")
 
@@ -179,6 +148,26 @@ def _agent_tool_context():
         client.stop(None, None, None)
 
 
+@contextmanager
+def _analyze_tool_context():
+    """
+    Analyze mode uses operational tools only.
+    KB/MCP retrieval is intentionally disabled here to keep the response grounded
+    in live backend state and avoid bloating the agent loop.
+    """
+    if not OPS_MCP_URL:
+        yield _LOCAL_ANALYZE_TOOLS
+        return
+
+    client = MCPClient(lambda: streamablehttp_client(OPS_MCP_URL, headers=_ops_mcp_headers()))
+    try:
+        client.start()
+        mcp_tools = _load_all_mcp_tools(client)
+        yield [*mcp_tools, *_LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS]
+    finally:
+        client.stop(None, None, None)
+
+
 def _make_agent(tools) -> Agent:
     """Create a fresh Strands agent instance."""
     model = _build_model()
@@ -194,16 +183,9 @@ def _make_agent(tools) -> Agent:
 _ANALYZE_PROMPT = """Analyze the current Mars Greenhouse mission state.
 
 Steps:
-<<<<<<< HEAD
-1. Call getMissionState() to get current state
-2. Call runPlannerAnalysis() to get planner recommendations
-3. Produce a JSON object matching this exact schema:
-=======
 1. Call getMissionState()
 2. Call runPlannerAnalysis()
-3. If agronomy or mission rationale would improve the explanation, call searchKnowledgeBase() with a focused query
-4. Return ONLY this compact JSON object:
->>>>>>> 3d97219 (feat: amazon bedrock)
+3. Return ONLY this compact JSON object:
 
 {{
   "decisionId": "<string>",
@@ -236,20 +218,13 @@ Steps:
   "kbContextUsed": <bool>
 }}
 
-<<<<<<< HEAD
-CRITICAL: Use ONLY values from getMissionState() and runPlannerAnalysis() outputs.
-Do NOT invent sensor readings, nutrition numbers, or zone values.
-Return ONLY the JSON object, no markdown, no extra text.
-=======
 Rules:
 - Ground every statement in getMissionState() and runPlannerAnalysis()
-- Use searchKnowledgeBase() only for explanation, thresholds, or mitigation rationale
-- Do not use searchKnowledgeBase() as the source of live mission values
+- Do not call searchKnowledgeBase() in analyze mode
 - Do not invent sensor values, nutrition values, planner actions, or before/after numbers
 - Do not restate the full tool payload
 - Keep the output concise and operational
 - Return ONLY JSON, no markdown
->>>>>>> 3d97219 (feat: amazon bedrock)
 """
 
 
@@ -273,14 +248,14 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"Could not extract JSON from agent response: {text[:500]}")
 
 
-def _get_backend_stub_decision() -> dict | None:
+def _get_backend_stub_decision(payload: dict | None = None) -> dict | None:
     """
     Call the existing TypeScript backend agent stub to get recommended actions.
     The stub owns the deterministic planner execution — we reuse it rather than
     reimplementing the action logic in Python.
     """
     try:
-        resp = _client.post("/api/agent/analyze", json={})
+        resp = _client.post("/api/agent/analyze", json=payload or {})
         resp.raise_for_status()
         return resp.json()
     except Exception:
@@ -417,30 +392,31 @@ def _overlay_llm_fields(
     - riskLevel when it remains within the canonical enum
     """
     payload = base.model_dump()
+    allow_narrative_overlay = not preserve_emergency_narrative
 
     if isinstance(llm_data.get("decisionId"), str) and llm_data["decisionId"].strip():
-      payload["decisionId"] = llm_data["decisionId"].strip()
+        payload["decisionId"] = llm_data["decisionId"].strip()
 
     if isinstance(llm_data.get("missionDay"), int):
-      payload["missionDay"] = llm_data["missionDay"]
+        payload["missionDay"] = llm_data["missionDay"]
 
     if isinstance(llm_data.get("timestamp"), str) and llm_data["timestamp"].strip():
-      payload["timestamp"] = llm_data["timestamp"].strip()
+        payload["timestamp"] = llm_data["timestamp"].strip()
 
-    if isinstance(llm_data.get("riskLevel"), str) and llm_data["riskLevel"] in _RISK_LEVELS:
-      payload["riskLevel"] = llm_data["riskLevel"]
+    if allow_narrative_overlay and isinstance(llm_data.get("riskLevel"), str) and llm_data["riskLevel"] in _RISK_LEVELS:
+        payload["riskLevel"] = llm_data["riskLevel"]
 
-    if isinstance(llm_data.get("riskSummary"), str) and llm_data["riskSummary"].strip():
-      payload["riskSummary"] = llm_data["riskSummary"].strip()
+    if allow_narrative_overlay and isinstance(llm_data.get("riskSummary"), str) and llm_data["riskSummary"].strip():
+        payload["riskSummary"] = llm_data["riskSummary"].strip()
 
     dependencies = llm_data.get("criticalNutrientDependencies")
     if isinstance(dependencies, list):
-      normalized_dependencies = [item.strip() for item in dependencies if isinstance(item, str) and item.strip()]
-      if normalized_dependencies:
-        payload["criticalNutrientDependencies"] = normalized_dependencies
+        normalized_dependencies = [item.strip() for item in dependencies if isinstance(item, str) and item.strip()]
+        if normalized_dependencies:
+            payload["criticalNutrientDependencies"] = normalized_dependencies
 
-    if isinstance(llm_data.get("explanation"), str) and llm_data["explanation"].strip():
-      payload["explanation"] = llm_data["explanation"].strip()
+    if allow_narrative_overlay and isinstance(llm_data.get("explanation"), str) and llm_data["explanation"].strip():
+        payload["explanation"] = llm_data["explanation"].strip()
 
     payload["kbContextUsed"] = kb_context_used
 
@@ -452,7 +428,14 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
     Run incident analysis on the current mission state.
     Uses the Strands agent with tools; falls back to deterministic analysis if LLM fails.
     """
-    # Always fetch current state for fallback
+    stub_request = {
+        "focus": request.focus,
+        "autoApply": request.autoApply,
+    }
+    stub_decision_data = _get_backend_stub_decision(stub_request)
+
+    # Always fetch current state for fallback. If auto-apply ran through the backend stub,
+    # these reads reflect the post-apply mission state.
     raw_mission = json.loads(getMissionState._tool_func())
     raw_planner = json.loads(runPlannerAnalysis._tool_func())
     mission = MissionState.model_validate(raw_mission)
@@ -466,16 +449,25 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
 
     prompt = _ANALYZE_PROMPT + focus_hint
     fallback_decision = _fallback_analyze(mission, planner)
+    if stub_decision_data is not None:
+        try:
+            fallback_decision = AIDecision.model_validate(stub_decision_data)
+        except Exception:
+            pass
     reset_kb_usage()
 
+    # Auto-apply must remain deterministic and authoritative. Use the backend stub's
+    # applied result directly instead of asking the LLM to regenerate the full object.
+    if request.autoApply:
+        return fallback_decision
+
     try:
-        with _agent_tool_context() as tools:
+        with _analyze_tool_context() as tools:
             agent = _make_agent(tools)
             result = agent(prompt)
         # Strands returns an AgentResult; get the text content
         response_text = str(result)
         data = _extract_json(response_text)
-        return _overlay_llm_fields(base=fallback_decision, llm_data=data)
         preserve_emergency_narrative = (
             mission.status != "nominal"
             or mission.activeScenario is not None

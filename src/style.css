@@ -967,6 +967,30 @@ code,
   background: var(--bg-1);
 }
 
+.ui-alert--loading {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(74, 127, 193, 0.2);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(74, 127, 193, 0.05), rgba(255, 255, 255, 0.02), rgba(74, 127, 193, 0.04)),
+    rgba(15, 19, 32, 0.58);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 6px 18px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.ui-alert--loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.08) 45%, transparent 65%);
+  transform: translateX(-100%);
+  animation: ui-alert-sheen 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
 .ui-alert--nom {
   border-color: rgba(58, 125, 68, 0.55);
   background: rgba(10, 31, 13, 0.55);
@@ -989,6 +1013,30 @@ code,
   min-width: 0;
 }
 
+.ui-alert__signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.ui-alert__signal span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(74, 127, 193, 0.7);
+  box-shadow: 0 0 10px rgba(74, 127, 193, 0.22);
+  animation: ui-alert-pulse 1.2s ease-in-out infinite;
+}
+
+.ui-alert__signal span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.ui-alert__signal span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
 .ui-alert__label {
   flex: 0 0 auto;
   border: 1px solid currentColor;
@@ -999,9 +1047,19 @@ code,
   line-height: 16px;
 }
 
+.ui-alert__label--loading {
+  border-color: rgba(74, 127, 193, 0.22);
+  background: rgba(74, 127, 193, 0.07);
+  color: rgba(232, 234, 242, 0.82);
+}
+
 .ui-alert__body {
   color: var(--text-1);
   font-size: 1rem;
+}
+
+.ui-alert__body--loading {
+  color: rgba(232, 234, 242, 0.74);
 }
 
 .ui-alert__dismiss {
@@ -1009,6 +1067,29 @@ code,
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
+}
+
+@keyframes ui-alert-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0) scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1);
+  }
+}
+
+@keyframes ui-alert-sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .ui-log {

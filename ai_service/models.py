@@ -222,6 +222,7 @@ class ScenarioCatalogEntry(BaseModel):
 class AnalyzeRequest(BaseModel):
     """Request body for POST /ai/analyze"""
     focus: Optional[Literal["mission_overview", "nutrition_risk", "scenario_response"]] = "mission_overview"
+    autoApply: bool = False
 
 
 class ChatRequest(BaseModel):

@@ -54,6 +54,7 @@ interface AlertStripProps {
   label: string;
   children: string;
   onDismiss?: boolean;
+  loading?: boolean;
 }
 
 interface LogLineProps {
@@ -202,12 +203,24 @@ export function renderAlertStrip({
   label,
   children,
   onDismiss = false,
+  loading = false,
 }: AlertStripProps): string {
   return `
-    <div class="ui-alert ui-alert--${level}">
+    <div class="ui-alert ui-alert--${level}${loading ? " ui-alert--loading" : ""}">
       <div class="ui-alert__left">
-        <span class="ui-alert__label">${label}</span>
-        <span class="ui-alert__body">${children}</span>
+        ${
+          loading
+            ? `
+                <span class="ui-alert__signal" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </span>
+              `
+            : ""
+        }
+        <span class="ui-alert__label${loading ? " ui-alert__label--loading" : ""}">${label}</span>
+        <span class="ui-alert__body${loading ? " ui-alert__body--loading" : ""}">${children}</span>
       </div>
       ${
         onDismiss
