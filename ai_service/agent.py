@@ -35,10 +35,43 @@ def _get_model_limits() -> tuple[int, float]:
     return max_tokens, temperature
 
 
+def _get_env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_model_provider() -> str:
+    """Resolve which model backend to use for the current run."""
+    provider = os.getenv("MODEL_PROVIDER", "").strip().lower()
+    if provider and provider not in {"auto", "anthropic", "openai", "bedrock"}:
+        raise RuntimeError(
+            "Unsupported MODEL_PROVIDER. Use one of: auto, anthropic, openai, bedrock."
+        )
+
+    if provider in {"anthropic", "openai", "bedrock"}:
+        return provider
+
+    if os.getenv("BEDROCK_MODEL_ID") or os.getenv("AWS_REGION"):
+        return "bedrock"
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+
+    raise RuntimeError(
+        "No supported AI provider is configured. Set MODEL_PROVIDER=bedrock with "
+        "AWS_REGION/BEDROCK_MODEL_ID, or provide ANTHROPIC_API_KEY / OPENAI_API_KEY."
+    )
+
+
 def _build_model():
     """Build the Strands model from environment config."""
     max_tokens, temperature = _get_model_limits()
-    if os.getenv("ANTHROPIC_API_KEY"):
+    provider = _get_model_provider()
+
+    if provider == "anthropic":
         from strands.models import AnthropicModel  # type: ignore
         return AnthropicModel(
             client_args={
@@ -51,7 +84,7 @@ def _build_model():
             },
         )
 
-    if os.getenv("OPENAI_API_KEY"):
+    if provider == "openai":
         from strands.models import OpenAIModel  # type: ignore
         return OpenAIModel(
             model_id=os.getenv("OPENAI_MODEL_ID", "gpt-4o-mini"),
@@ -64,7 +97,20 @@ def _build_model():
             },
         )
 
-    raise RuntimeError("No supported direct AI provider is configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.")
+    if provider == "bedrock":
+        from strands.models import BedrockModel  # type: ignore
+        return BedrockModel(
+            model_id=os.getenv(
+                "BEDROCK_MODEL_ID",
+                "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            ),
+            region_name=os.getenv("AWS_REGION", "us-east-2"),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            streaming=_get_env_bool("BEDROCK_STREAMING", False),
+        )
+
+    raise RuntimeError("No supported AI provider is configured.")
 
 
 _LOCAL_TOOLS = [
@@ -81,9 +127,10 @@ _LOCAL_ANALYZE_TOOLS = [
     runPlannerAnalysis,
     getScenarioCatalog,
     locateDashboardSection,
+    searchKnowledgeBase,
 ]
 _LOCAL_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
-_LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS = [locateDashboardSection]
+_LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
 OPS_MCP_URL = os.getenv("OPS_MCP_URL")
 OPS_MCP_AUTH_TOKEN = os.getenv("OPS_MCP_AUTH_TOKEN")
 
@@ -141,19 +188,29 @@ def _agent_tool_context():
 
     client = MCPClient(lambda: streamablehttp_client(OPS_MCP_URL, headers=_ops_mcp_headers()))
     try:
-        client.start()
-        mcp_tools = _load_all_mcp_tools(client)
+        try:
+            client.start()
+            mcp_tools = _load_all_mcp_tools(client)
+        except Exception as exc:
+            print(
+                f"[agent] ops MCP unavailable ({type(exc).__name__}: {exc}), "
+                "falling back to local operational tools"
+            )
+            yield _LOCAL_TOOLS
+            return
         yield [*mcp_tools, *_LOCAL_NON_OPERATIONAL_TOOLS]
     finally:
-        client.stop(None, None, None)
+        try:
+            client.stop(None, None, None)
+        except Exception:
+            pass
 
 
 @contextmanager
 def _analyze_tool_context():
     """
-    Analyze mode uses operational tools only.
-    KB/MCP retrieval is intentionally disabled here to keep the response grounded
-    in live backend state and avoid bloating the agent loop.
+    Analyze mode remains grounded in live backend state, but it may also use the
+    KB gateway when domain context materially improves the recommendation.
     """
     if not OPS_MCP_URL:
         yield _LOCAL_ANALYZE_TOOLS
@@ -161,11 +218,22 @@ def _analyze_tool_context():
 
     client = MCPClient(lambda: streamablehttp_client(OPS_MCP_URL, headers=_ops_mcp_headers()))
     try:
-        client.start()
-        mcp_tools = _load_all_mcp_tools(client)
+        try:
+            client.start()
+            mcp_tools = _load_all_mcp_tools(client)
+        except Exception as exc:
+            print(
+                f"[agent] ops MCP unavailable ({type(exc).__name__}: {exc}), "
+                "falling back to local analyze tools"
+            )
+            yield _LOCAL_ANALYZE_TOOLS
+            return
         yield [*mcp_tools, *_LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS]
     finally:
-        client.stop(None, None, None)
+        try:
+            client.stop(None, None, None)
+        except Exception:
+            pass
 
 
 def _make_agent(tools) -> Agent:
@@ -220,7 +288,8 @@ Steps:
 
 Rules:
 - Ground every statement in getMissionState() and runPlannerAnalysis()
-- Do not call searchKnowledgeBase() in analyze mode
+- Use searchKnowledgeBase() only when it materially improves decision rationale or tradeoff explanation
+- Prefer at most one KB retrieval per analyze run
 - Do not invent sensor values, nutrition values, planner actions, or before/after numbers
 - Do not restate the full tool payload
 - Keep the output concise and operational
