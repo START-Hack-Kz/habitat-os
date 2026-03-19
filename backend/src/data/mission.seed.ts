@@ -23,17 +23,18 @@ export const MISSION_SEED: MissionState = {
   // ── Crop zones ─────────────────────────────────────────────────────────────
   // Area allocation follows MCP strategic model:
   // 40–50% potato, 20–30% legumes, 15–20% leafy greens, 5–10% radish
-  // Total area: 46 m² → potato 39%, beans 26%, lettuce 22%, radish 13%
+  // Total area: 200 m² → potato 45%, beans 25%, lettuce 20%, radish 10%
+  // Area sized so nominal caloric coverage ≈ 90% at 12,000 kcal/day target [APPROX]
   zones: [
     {
       zoneId: "zone-a",
       name: "Leafy Greens Bay",
       cropType: "lettuce",
-      areaM2: 10,
+      areaM2: 40,
       growthDay: 19,
       growthCycleDays: 35,   // MCP: 30–45 days; using 35 [APPROX midpoint]
       growthProgressPercent: 54.3,
-      projectedYieldKg: 32.5, // [APPROX] 10 m² × ~3.5 kg/m² (mid-range of MCP 3–5 kg/m²)
+      projectedYieldKg: 160, // [APPROX] 40 m² × 4 kg/m² (mid-range of MCP 3–5 kg/m²)
       allocationPercent: 22,
       status: "healthy",
       stress: {
@@ -47,11 +48,11 @@ export const MISSION_SEED: MissionState = {
       zoneId: "zone-b",
       name: "Tuber Production Bay",
       cropType: "potato",
-      areaM2: 18,
+      areaM2: 90,
       growthDay: 46,
       growthCycleDays: 90,   // MCP: 70–120 days; using 90 [APPROX midpoint]
       growthProgressPercent: 51.1,
-      projectedYieldKg: 108.0, // [APPROX] 18 m² × 6 kg/m² (mid-range of MCP 4–8 kg/m²)
+      projectedYieldKg: 540, // [APPROX] 90 m² × 6 kg/m² (mid-range of MCP 4–8 kg/m²)
       allocationPercent: 38,
       status: "healthy",
       stress: {
@@ -65,11 +66,11 @@ export const MISSION_SEED: MissionState = {
       zoneId: "zone-c",
       name: "Protein Crop Bay",
       cropType: "beans",
-      areaM2: 12,
+      areaM2: 50,
       growthDay: 31,
       growthCycleDays: 60,   // MCP: 50–70 days; using 60 [APPROX midpoint]
       growthProgressPercent: 51.7,
-      projectedYieldKg: 36.0, // [APPROX] 12 m² × 3 kg/m² (mid-range of MCP 2–4 kg/m²)
+      projectedYieldKg: 150, // [APPROX] 50 m² × 3 kg/m² (mid-range of MCP 2–4 kg/m²)
       allocationPercent: 26,
       status: "healthy",
       stress: {
@@ -83,11 +84,11 @@ export const MISSION_SEED: MissionState = {
       zoneId: "zone-d",
       name: "Fast Harvest Bay",
       cropType: "radish",
-      areaM2: 6,
+      areaM2: 20,
       growthDay: 13,
       growthCycleDays: 25,   // MCP: 21–30 days; using 25 [APPROX midpoint]
       growthProgressPercent: 52.0,
-      projectedYieldKg: 18.0, // [APPROX] 6 m² × 3 kg/m² (mid-range of MCP 2–4 kg/m²)
+      projectedYieldKg: 60,  // [APPROX] 20 m² × 3 kg/m² (mid-range of MCP 2–4 kg/m²)
       allocationPercent: 14,
       status: "healthy",
       stress: {
@@ -113,17 +114,17 @@ export const MISSION_SEED: MissionState = {
 
   // ── Nutrition status ────────────────────────────────────────────────────────
   // Targets from MCP: 12,000 kcal/day (4 × 3,000), 450 g protein/day (4 × ~112g)
-  // Micronutrient adequacy is a composite — 88% reflects healthy multi-crop state [APPROX]
+  // Values below are what calculateNutrition() produces for this seed state.
   nutrition: {
-    dailyCaloriesProduced: 10800,          // normal — 90% coverage; good but not full [APPROX]
+    dailyCaloriesProduced: 8190,           // normal — 68% coverage [calculator-derived]
     dailyCaloriesTarget: 12000,            // MCP-grounded
-    caloricCoveragePercent: 90.0,          // normal
-    dailyProteinProducedG: 405,            // normal — 90% of target [APPROX]
+    caloricCoveragePercent: 68,            // normal [calculator-derived]
+    dailyProteinProducedG: 376,            // normal — 84% of target [calculator-derived]
     dailyProteinTargetG: 450,              // MCP-grounded
-    proteinCoveragePercent: 90.0,          // normal
-    micronutrientAdequacyPercent: 88,      // normal — all zones healthy [APPROX]
-    nutritionalCoverageScore: 89,          // normal — weighted composite [APPROX]
-    daysSafe: 68,                          // normal — comfortable runway [APPROX]
+    proteinCoveragePercent: 84,            // normal [calculator-derived]
+    micronutrientAdequacyPercent: 100,     // normal — all zones healthy
+    nutritionalCoverageScore: 79,          // normal — weighted composite [calculator-derived]
+    daysSafe: 287,                         // normal — comfortable runway [calculator-derived]
     trend: "stable",                       // nominal state = stable
   },
 
