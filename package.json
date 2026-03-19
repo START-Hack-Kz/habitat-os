@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
+    "backend:dev": "tsx watch --tsconfig backend/tsconfig.json backend/src/server.ts",
+    "backend:start": "tsx --tsconfig backend/tsconfig.json backend/src/server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -18,11 +20,14 @@
     "aws-cdk-lib": "^2.234.1",
     "constructs": "^10.5.1",
     "esbuild": "^0.27.4",
+    "@types/node": "^24.6.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.1.11"
   },
   "dependencies": {
-    "aws-amplify": "^6.16.3"
+    "aws-amplify": "^6.16.3",
+    "dotenv": "^17.2.3",
+    "fastify": "^5.6.1"
   }
 }
