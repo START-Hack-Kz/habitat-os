@@ -11,6 +11,7 @@ async function start() {
   try {
     await app.listen({ host: "127.0.0.1", port });
   } catch (error) {
+    console.error(error);
     app.log.error(error);
     process.exit(1);
   }
