@@ -5,7 +5,9 @@
  * grounded in the Mars Crop Knowledge Base (MCP) unless marked [APPROX].
  */
 
-export type CropId = "lettuce" | "potato" | "beans" | "radish";
+import type { CropType } from "../modules/mission/mission.types";
+
+export type CropId = CropType;
 export type MissionRole =
   | "micronutrient_stabilizer"
   | "caloric_backbone"
