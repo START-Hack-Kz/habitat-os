@@ -14,7 +14,6 @@ import {
   fragility,
   fullAgentLog,
   headerModel,
-  missionHero,
   missionMemory,
   missionTabs,
   nutrients,
@@ -22,8 +21,6 @@ import {
   overviewGridCells,
   overviewMetrics,
   npkGauges,
-  pageContentByTab,
-  repoSignals,
   resourceMetrics,
   riskAlert,
   riskMetrics,
@@ -69,6 +66,7 @@ import {
   renderGaugeBar,
   renderKpiTile,
   renderLogEntry,
+  renderNutrientPieChart,
   renderNotice,
   renderPanel,
   renderSparkline,
@@ -109,56 +107,13 @@ export function renderApp(root: HTMLDivElement): void {
   };
 
   const draw = () => {
-    const activePage = pageContentByTab[activeTab];
-    const activeLabel =
-      missionTabs.find((tab) => tab.id === activeTab)?.label ?? activePage.introTitle;
-    const showOverviewChrome = activeTab !== "overview";
-
     root.innerHTML = `
       <div class="app-frame">
         ${renderHeader(headerModel)}
         ${renderNavigation(missionTabs, activeTab)}
 
         <div class="app-shell">
-          ${
-            showOverviewChrome
-              ? `
-                <header class="masthead">
-                  <p class="eyebrow">${missionHero.eyebrow}</p>
-                  <h1>${missionHero.title}</h1>
-                  <p class="subtitle">${missionHero.subtitle}</p>
-                  <div class="rule"></div>
-                  <p class="dek">${missionHero.body}</p>
-                </header>
-              `
-              : ""
-          }
-
           <main class="workspace">
-            ${
-              showOverviewChrome
-                ? `
-                  <section class="panel panel-pad page-intro">
-                    <div>
-                      <p class="eyebrow">Active Page</p>
-                      <h2>${activeLabel}</h2>
-                      <p>${activePage.introBody}</p>
-                    </div>
-                    <div class="intro-meta">
-                      <div>
-                        <span class="meta-label">Workflow Sources</span>
-                        <span class="meta-value">${repoSignals.panelCount} panels &middot; ${repoSignals.endpointCount} API endpoints</span>
-                      </div>
-                      <div>
-                        <span class="meta-label">Schema Probe</span>
-                        <span class="meta-value meta-value--mono">${repoSignals.scenarioTypeCount} scenario types parsed</span>
-                      </div>
-                    </div>
-                  </section>
-                `
-                : ""
-            }
-
             ${renderPage()}
           </main>
         </div>
@@ -398,8 +353,10 @@ function renderOverview(overviewAlertDismissed: boolean): string {
             title: "Crew Nutrition",
             dotColor: "var(--nom)",
             children: `
-              <div class="overview-nutrition-mini">
-                ${nutritionMini.map((item) => renderNutritionMiniRow(item)).join("")}
+              <div class="overview-nutrition-panel">
+                <div class="overview-nutrition-mini">
+                  ${nutritionMini.map((item) => renderNutritionMiniRow(item)).join("")}
+                </div>
               </div>
             `,
           })}
@@ -440,6 +397,7 @@ function renderCrops(selectedCropId: string): string {
   const selectedCrop = crops.find((crop) => crop.id === selectedCropId) ?? crops[0];
   const selectedStages = cropStages[selectedCrop.id] ?? [];
   const selectedDiagnostics = buildCropDiagnostics(selectedCrop);
+  const selectedPrimaryNutrient = getPrimaryCropNutrient(selectedCrop);
 
   return `
     <section class="crop-tab">
@@ -458,30 +416,58 @@ function renderCrops(selectedCropId: string): string {
       })}
 
       <div class="crop-detail-row">
-        ${renderPanel({
-          title: "Growth Stage Tracker",
-          dotColor: "var(--aero-blue)",
-          rightSlot: renderStatusBadge(selectedCrop.name, selectedCrop.healthLevel),
-          children: `
-            <div class="crop-stage-panel">
-              <div class="crop-stage-line">
-                ${selectedStages.map((item) => renderCropStageNode(item)).join("")}
+        <div class="crop-detail-primary">
+          ${renderPanel({
+            title: "Growth Stage Tracker",
+            dotColor: "var(--aero-blue)",
+            rightSlot: renderStatusBadge(selectedCrop.name, selectedCrop.healthLevel),
+            children: `
+              <div class="crop-stage-panel">
+                <div class="crop-stage-line">
+                  ${selectedStages.map((item) => renderCropStageNode(item)).join("")}
+                </div>
+                <div class="crop-stage-gauges">
+                  ${selectedDiagnostics.map((item) =>
+                    renderGaugeBar({
+                      name: item.name,
+                      value: item.value,
+                      fillPct: item.fillPct,
+                      fillColor: item.fillColor,
+                      label: "Selected crop",
+                      valueMuted: item.valueMuted,
+                    }),
+                  ).join("")}
+                </div>
               </div>
-              <div class="crop-stage-gauges">
-                ${selectedDiagnostics.map((item) =>
-                  renderGaugeBar({
-                    name: item.name,
-                    value: item.value,
-                    fillPct: item.fillPct,
-                    fillColor: item.fillColor,
-                    label: "Selected crop",
-                    valueMuted: item.valueMuted,
-                  }),
-                ).join("")}
+            `,
+          })}
+
+          ${renderPanel({
+            title: "Nutrient Profile",
+            dotColor: "var(--nom)",
+            rightSlot: renderStatusBadge(selectedPrimaryNutrient.label, selectedCrop.healthLevel),
+            children: `
+              <div class="crop-nutrient-panel">
+                ${renderNutrientPieChart({
+                  slices: selectedCrop.nutrients,
+                  centerLabel: selectedCrop.zone,
+                  centerValue: `${getCropNutrientTotal(selectedCrop)} pts`,
+                })}
+                <div class="crop-nutrient-panel__meta">
+                  <div class="crop-nutrient-legend">
+                    ${selectedCrop.nutrients
+                      .map((slice) => renderCropNutrientLegendItem(slice, selectedCrop))
+                      .join("")}
+                  </div>
+                  <p class="crop-nutrient-note">
+                    Primary nutrient contribution:
+                    <span class="mono">${selectedPrimaryNutrient.label}</span>
+                  </p>
+                </div>
               </div>
-            </div>
-          `,
-        })}
+            `,
+          })}
+        </div>
 
         ${renderPanel({
           title: "Yield Forecast",
@@ -666,17 +652,20 @@ function renderNutrition(): string {
       ${renderPanel({
         title: "Nutrition Table",
         dotColor: "var(--cau)",
-        noPad: true,
-        children: renderDataTable({
-          columns: ["Nutrient", "Current", "Target", "Coverage", "Source"],
-          rows: nutrients.map((item) => [
-            item.nutrient,
-            `<span class="mono">${item.current}</span>`,
-            `<span class="mono">${item.target}</span>`,
-            renderStatusBadge(item.coverage, item.coverageLevel),
-            item.source,
-          ]),
-        }),
+        children: `
+          <div class="nutrition-table-wrap">
+            ${renderDataTable({
+              columns: ["Nutrient", "Current", "Target", "Coverage", "Source"],
+              rows: nutrients.map((item) => [
+                item.nutrient,
+                `<span class="mono">${item.current}</span>`,
+                `<span class="mono">${item.target}</span>`,
+                renderStatusBadge(item.coverage, item.coverageLevel),
+                item.source,
+              ]),
+            })}
+          </div>
+        `,
       })}
 
       ${renderPanel({
@@ -1075,12 +1064,63 @@ function renderCropStageNode(item: { label: string; sol: string; state: "done" |
 }
 
 function renderGridCell(cell: GridCell): string {
+  const twinCopy = getTwinCellCopy(cell);
+
   return `
     <div class="gh-cell ${cell.statusClass} ${cell.modifierClass ?? ""}">
-      <span class="gh-cell__emoji">${cell.emoji}</span>
-      <span class="gh-cell__label">${cell.label}</span>
+      <span class="gh-cell__slot mono">${twinCopy.slot}</span>
+      <span class="gh-cell__title">${twinCopy.title}</span>
+      <span class="gh-cell__meta mono">${twinCopy.meta}</span>
     </div>
   `;
+}
+
+function getTwinCellCopy(cell: GridCell): { slot: string; title: string; meta: string } {
+  const overviewCropOrder = [
+    "cell-a1",
+    "cell-a2",
+    "cell-a3",
+    "cell-a4",
+    "cell-b1",
+    "cell-b2",
+    "cell-b3",
+    "cell-b4",
+  ];
+  const cropIndex = overviewCropOrder.indexOf(cell.id);
+
+  if (cropIndex >= 0) {
+    const crop = crops[cropIndex] ?? crops[0];
+
+    return {
+      slot: crop.zone,
+      title: crop.name,
+      meta:
+        crop.healthLevel === "NOM"
+          ? `${crop.stage} | ${crop.healthScore}% health`
+          : `${crop.stressLabel} | ${crop.healthScore}% health`,
+    };
+  }
+
+  switch (cell.id) {
+    case "cell-e1":
+      return { slot: "RES-E1", title: "Spinach Reserve", meta: "leaf reserve | 83% health" };
+    case "cell-e2":
+      return { slot: "RES-E2", title: "Blueberry Reserve", meta: "light deficit | 68% health" };
+    case "cell-e3":
+      return { slot: "RES-E3", title: "Tomato Buffer", meta: "water deficit | 57% health" };
+    case "cell-e4":
+      return { slot: "RES-E4", title: "Soybean Buffer", meta: "protein reserve | 79% health" };
+    case "cell-f1":
+      return { slot: "RES-F1", title: "Seed Reserve", meta: "offline contingency" };
+    case "cell-f2":
+      return { slot: "RES-F2", title: "Spare Tray", meta: "offline contingency" };
+    case "cell-f3":
+      return { slot: "RES-F3", title: "Microgreens", meta: "backup greens | 64% health" };
+    case "cell-f4":
+      return { slot: "RES-F4", title: "Watercress", meta: "backup greens | 72% health" };
+    default:
+      return { slot: cell.label, title: "Crop Tray", meta: "mission-linked occupancy" };
+  }
 }
 
 function renderDependencyRow(item: CropDependencyRow): string[] {
@@ -1319,6 +1359,19 @@ function renderNutritionMiniRow(item: NutrientRow): string {
   `;
 }
 
+function renderCropNutrientLegendItem(slice: CropData["nutrients"][number], crop: CropData): string {
+  const pct = getCropNutrientPercent(crop, slice.value);
+
+  return `
+    <div class="crop-nutrient-legend__item">
+      <span class="crop-nutrient-legend__swatch" style="background:${slice.color}"></span>
+      <span class="crop-nutrient-legend__label">${slice.label}</span>
+      <span class="crop-nutrient-legend__value mono">${slice.value}</span>
+      <span class="crop-nutrient-legend__pct mono">${pct}%</span>
+    </div>
+  `;
+}
+
 function renderScenarioCard(item: ScenarioCard): string {
   return renderNotice({
     level: getNoticeLevel(item.level),
@@ -1392,6 +1445,25 @@ function buildCropDiagnostics(crop: CropData): Array<{
       valueMuted: `${crop.allocationPct}% allocation`,
     },
   ];
+}
+
+function getCropNutrientTotal(crop: CropData): number {
+  return crop.nutrients.reduce((sum, slice) => sum + slice.value, 0);
+}
+
+function getCropNutrientPercent(crop: CropData, value: number): number {
+  const total = getCropNutrientTotal(crop) || 1;
+  return Math.round((value / total) * 100);
+}
+
+function getPrimaryCropNutrient(crop: CropData): CropData["nutrients"][number] {
+  const [firstSlice] = crop.nutrients;
+
+  if (!firstSlice) {
+    return { label: "Baseline", value: 0, color: "var(--chrome-hi)" };
+  }
+
+  return crop.nutrients.reduce((top, slice) => (slice.value > top.value ? slice : top), firstSlice);
 }
 
 function getTrendGlyph(points: number[]): string {

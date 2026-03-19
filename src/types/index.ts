@@ -12,6 +12,12 @@ export type AlertLevel = "nom" | "cau" | "abt";
 export type LogEntryType = "act" | "wrn" | "alr" | "inf";
 export type ButtonTone = "default" | "primary" | "danger";
 
+export interface CropNutrientSlice {
+  label: string;
+  value: number;
+  color: string;
+}
+
 export interface CropData {
   id: string;
   emoji: string;
@@ -28,6 +34,7 @@ export interface CropData {
   harvestSol: string;
   sparkPoints: number[];
   sparkColor: string;
+  nutrients: CropNutrientSlice[];
 }
 
 export interface EnvParam {

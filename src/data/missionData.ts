@@ -8,6 +8,7 @@ import scenarioSchemaRaw from "../../shared/schemas/scenarioInput.schema.ts?raw"
 import type {
   AgentMetric,
   CropData,
+  CropNutrientSlice,
   CropDependencyRow,
   CropMetric,
   CropStageNode,
@@ -63,6 +64,82 @@ const cropPalette = [
   { emoji: "🍅", color: "var(--abt)" },
   { emoji: "🌾", color: "var(--nom)" },
 ];
+
+const nutrientPalette = [
+  "var(--nom)",
+  "var(--aero-blue)",
+  "var(--cau)",
+  "var(--mars-orange)",
+  "var(--chrome-hi)",
+];
+
+const cropNutrientSeeds: Record<string, Array<{ label: string; value: number }>> = {
+  lettuce: [
+    { label: "Vitamin A", value: 34 },
+    { label: "Vitamin K", value: 26 },
+    { label: "Folate", value: 18 },
+    { label: "Fiber", value: 12 },
+    { label: "Hydration", value: 10 },
+  ],
+  potato: [
+    { label: "Calories", value: 40 },
+    { label: "Potassium", value: 24 },
+    { label: "Vitamin C", value: 16 },
+    { label: "Fiber", value: 12 },
+    { label: "Protein", value: 8 },
+  ],
+  beans: [
+    { label: "Protein", value: 34 },
+    { label: "Folate", value: 22 },
+    { label: "Iron", value: 18 },
+    { label: "Magnesium", value: 14 },
+    { label: "Fiber", value: 12 },
+  ],
+  radish: [
+    { label: "Vitamin C", value: 34 },
+    { label: "Fiber", value: 22 },
+    { label: "Folate", value: 16 },
+    { label: "Potassium", value: 16 },
+    { label: "Hydration", value: 12 },
+  ],
+  spinach: [
+    { label: "Iron", value: 28 },
+    { label: "Vitamin K", value: 24 },
+    { label: "Folate", value: 20 },
+    { label: "Magnesium", value: 16 },
+    { label: "Fiber", value: 12 },
+  ],
+  blueberry: [
+    { label: "Antioxidants", value: 34 },
+    { label: "Vitamin C", value: 22 },
+    { label: "Fiber", value: 18 },
+    { label: "Manganese", value: 14 },
+    { label: "Polyphenols", value: 12 },
+  ],
+  tomato: [
+    { label: "Lycopene", value: 30 },
+    { label: "Vitamin C", value: 24 },
+    { label: "Potassium", value: 20 },
+    { label: "Folate", value: 14 },
+    { label: "Fiber", value: 12 },
+  ],
+  soybean: [
+    { label: "Protein", value: 38 },
+    { label: "Iron", value: 18 },
+    { label: "Folate", value: 16 },
+    { label: "Magnesium", value: 16 },
+    { label: "Fiber", value: 12 },
+  ],
+};
+
+function buildCropNutrientSlices(cropKey: string): CropNutrientSlice[] {
+  const seeds = cropNutrientSeeds[cropKey] ?? cropNutrientSeeds.radish;
+
+  return seeds.map((slice, index) => ({
+    ...slice,
+    color: nutrientPalette[index % nutrientPalette.length],
+  }));
+}
 
 const pageHero: PageHero = {
   eyebrow: "Milestone M5",
@@ -157,6 +234,7 @@ const crops: CropData[] = [
       harvestSol: `SOL ${mission.missionDay + (zone.growthCycleTotal - zone.growthDay)}`,
       sparkPoints: buildSparkPoints(Math.round(zone.growthProgressPercent)),
       sparkColor: palette.color,
+      nutrients: buildCropNutrientSlices(zone.cropType),
     };
   }),
   {
@@ -175,6 +253,7 @@ const crops: CropData[] = [
     harvestSol: "SOL 105",
     sparkPoints: [62, 66, 71, 77, 80, 83],
     sparkColor: cropPalette[4].color,
+    nutrients: buildCropNutrientSlices("spinach"),
   },
   {
     id: "zone-f",
@@ -192,6 +271,7 @@ const crops: CropData[] = [
     harvestSol: "SOL 124",
     sparkPoints: [74, 73, 70, 69, 68, 68],
     sparkColor: cropPalette[5].color,
+    nutrients: buildCropNutrientSlices("blueberry"),
   },
   {
     id: "zone-g",
@@ -209,6 +289,7 @@ const crops: CropData[] = [
     harvestSol: "SOL 122",
     sparkPoints: [77, 72, 66, 63, 59, 57],
     sparkColor: cropPalette[6].color,
+    nutrients: buildCropNutrientSlices("tomato"),
   },
   {
     id: "zone-h",
@@ -226,6 +307,7 @@ const crops: CropData[] = [
     harvestSol: "SOL 120",
     sparkPoints: [55, 60, 67, 71, 76, 79],
     sparkColor: cropPalette[7].color,
+    nutrients: buildCropNutrientSlices("soybean"),
   },
 ];
 

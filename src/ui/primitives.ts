@@ -1,6 +1,7 @@
 import type {
   AlertLevel,
   ButtonTone,
+  CropNutrientSlice,
   LogEntryType,
   NoticeLevel,
   StatusTone,
@@ -75,6 +76,12 @@ interface AllocBarProps {
 interface SparklineProps {
   points: number[];
   stroke?: string;
+}
+
+interface NutrientPieChartProps {
+  slices: CropNutrientSlice[];
+  centerLabel: string;
+  centerValue: string;
 }
 
 export function renderPanel({
@@ -274,6 +281,34 @@ export function renderSparkline({ points, stroke = "var(--aero-blue)" }: Sparkli
     <svg class="ui-sparkline" viewBox="0 0 80 20" aria-hidden="true">
       <path d="${path}" fill="none" stroke="${stroke}" stroke-width="1.5" />
     </svg>
+  `;
+}
+
+export function renderNutrientPieChart({
+  slices,
+  centerLabel,
+  centerValue,
+}: NutrientPieChartProps): string {
+  const total = slices.reduce((sum, slice) => sum + slice.value, 0) || 1;
+  let offset = 0;
+  const gradient = slices
+    .map((slice) => {
+      const start = (offset / total) * 100;
+      offset += slice.value;
+      const end = (offset / total) * 100;
+      return `${slice.color} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+    })
+    .join(", ");
+
+  return `
+    <div class="ui-nutrient-chart" aria-hidden="true">
+      <div class="ui-nutrient-chart__ring" style="background: conic-gradient(${gradient})">
+        <div class="ui-nutrient-chart__center">
+          <span class="ui-nutrient-chart__center-label">${centerLabel}</span>
+          <span class="ui-nutrient-chart__center-value mono">${centerValue}</span>
+        </div>
+      </div>
+    </div>
   `;
 }
 
