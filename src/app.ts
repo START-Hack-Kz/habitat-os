@@ -2,6 +2,7 @@ import { renderHeader } from "./components/header";
 import { mountGreenhouseLanding, renderGreenhouseLanding } from "./components/greenhouseLanding";
 import { renderNavigation } from "./components/navigation";
 import {
+  applySimulationTweak,
   fetchAgentAnalysis,
   fetchAgentChat,
   fetchMissionState,
@@ -66,6 +67,33 @@ interface AppState {
   busy: boolean;
   syncMessage: string;
   error: string;
+  sensorNotification: SensorNotification | null;
+}
+
+interface SensorNotification {
+  id: string;
+  level: AlertLevel;
+  title: string;
+  body: string;
+  detail: string;
+}
+
+interface SensorResetPlan {
+  key: string;
+  zoneId: string;
+  level: AlertLevel;
+  title: string;
+  body: string;
+  detail: string;
+  tweak: {
+    zones: Array<{
+      zoneId: string;
+      temperature?: number;
+      humidity?: number;
+      nutrientPH?: number;
+      soilMoisture?: number;
+    }>;
+  };
 }
 
 interface MetricTileData {
@@ -98,13 +126,6 @@ interface OverviewResourceTileData {
   fillPct: number;
   fillColor: string;
   caution: boolean;
-}
-
-interface SensorReadingData {
-  label: string;
-  value: string;
-  state: string;
-  tone: StatusTone;
 }
 
 interface MicronutrientMiniData {
@@ -165,6 +186,7 @@ export function renderApp(root: HTMLDivElement): void {
     busy: false,
     syncMessage: "Connecting to live mission state.",
     error: "",
+    sensorNotification: null,
   };
   let pollTimer: number | null = null;
   let pollInFlight = false;
@@ -204,6 +226,7 @@ export function renderApp(root: HTMLDivElement): void {
           ${state.error ? renderErrorStrip(state.error) : ""}
           ${state.busy ? renderBusyStrip(state.syncMessage) : ""}
           ${state.agentAnalyzing ? renderAgentBusyStrip(state.agentAnalysisLabel) : ""}
+          ${renderSensorNotification(state.sensorNotification)}
           ${
             state.booting && !state.mission
               ? renderBootState()
@@ -233,6 +256,13 @@ export function renderApp(root: HTMLDivElement): void {
     const injectTrigger = target.closest<HTMLElement>("[data-scenario-inject]");
     const resetTrigger = target.closest<HTMLElement>("[data-scenario-reset]");
     const plannerRefresh = target.closest<HTMLElement>("[data-planner-refresh]");
+    const sensorNotificationClose = target.closest<HTMLElement>("[data-sensor-notification-close]");
+
+    if (sensorNotificationClose) {
+      state.sensorNotification = null;
+      draw();
+      return;
+    }
 
     if (greenhouseTrigger) {
       const greenhouseId = greenhouseTrigger.dataset.greenhouseOpen ?? "";
@@ -357,13 +387,16 @@ export function renderApp(root: HTMLDivElement): void {
       state.scenarios = scenariosResult.status === "fulfilled" ? scenariosResult.value : [];
       syncSelections(state);
       lastMissionWatchKey = buildMissionWatchKey(state.mission);
-      await syncDecisionSupport({
-        allowAutoAnalyze: false,
-        busyMessage: state.syncMessage,
-        showBusyStrip: false,
-        recordAutoLog: false,
-      });
-      lastHandledAutoAnalysisKey = buildAutoAnalysisKey(state.mission, state.planner);
+      const handledSensorReset = await handleSensorResetIfNeeded();
+      if (!handledSensorReset) {
+        await syncDecisionSupport({
+          allowAutoAnalyze: false,
+          busyMessage: state.syncMessage,
+          showBusyStrip: false,
+          recordAutoLog: false,
+        });
+        lastHandledAutoAnalysisKey = buildAutoAnalysisKey(state.mission, state.planner);
+      }
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
@@ -444,6 +477,7 @@ export function renderApp(root: HTMLDivElement): void {
 
     try {
       state.mission = await injectScenario({ scenarioType, severity });
+      state.sensorNotification = null;
       state.selectedScenarioType = scenarioType;
       syncSelections(state);
       lastMissionWatchKey = buildMissionWatchKey(state.mission);
@@ -470,6 +504,7 @@ export function renderApp(root: HTMLDivElement): void {
 
     try {
       state.mission = await resetSimulation();
+      state.sensorNotification = null;
       syncSelections(state);
       lastMissionWatchKey = buildMissionWatchKey(state.mission);
       await syncDecisionSupport({
@@ -525,12 +560,15 @@ export function renderApp(root: HTMLDivElement): void {
       state.mission = nextMission;
       lastMissionWatchKey = nextMissionWatchKey;
       syncSelections(state);
-      await syncDecisionSupport({
-        allowAutoAnalyze: true,
-        busyMessage: "",
-        showBusyStrip: false,
-        recordAutoLog: true,
-      });
+      const handledSensorReset = await handleSensorResetIfNeeded();
+      if (!handledSensorReset) {
+        await syncDecisionSupport({
+          allowAutoAnalyze: true,
+          busyMessage: "",
+          showBusyStrip: false,
+          recordAutoLog: true,
+        });
+      }
     } catch (error) {
       if (!state.mission) {
         state.error = getErrorMessage(error);
@@ -566,6 +604,15 @@ export function renderApp(root: HTMLDivElement): void {
         state.planner = null;
       }
 
+      const hasIncident = hasMissionIncident(state.mission, state.planner);
+      if (options.allowAutoAnalyze && !hasIncident) {
+        state.agent = null;
+        lastAgentAnalysisKey = "";
+        lastHandledAutoAnalysisKey = "";
+        state.error = "";
+        return;
+      }
+
       const focus = deriveAgentAnalysisFocus(state.mission, state.planner);
       const analysisKey = buildAgentAnalysisKey(state.mission, focus);
       const autoAnalysisKey = options.allowAutoAnalyze
@@ -573,7 +620,9 @@ export function renderApp(root: HTMLDivElement): void {
         : "";
       const shouldRunAutoAnalyze =
         autoAnalysisKey.length > 0 && autoAnalysisKey !== lastHandledAutoAnalysisKey;
-      const shouldRefreshAgent = shouldRunAutoAnalyze || !state.agent || analysisKey !== lastAgentAnalysisKey;
+      const shouldRefreshAgent = options.allowAutoAnalyze
+        ? shouldRunAutoAnalyze
+        : !state.agent || analysisKey !== lastAgentAnalysisKey;
 
       if (shouldRefreshAgent) {
         state.agentAnalyzing = true;
@@ -627,6 +676,95 @@ export function renderApp(root: HTMLDivElement): void {
 
       draw();
     }
+  }
+
+  async function handleSensorResetIfNeeded(): Promise<boolean> {
+    if (!state.mission || state.mission.activeScenario) {
+      return false;
+    }
+
+    const plan = detectSensorResetPlan(state.mission);
+
+    if (!plan) {
+      return false;
+    }
+
+    state.agent = null;
+    lastAgentAnalysisKey = "";
+    lastHandledAutoAnalysisKey = "";
+    state.sensorNotification = {
+      id: plan.key,
+      level: plan.level,
+      title: plan.title,
+      body: plan.body,
+      detail: plan.detail,
+    };
+    state.companionLog = mergeCompanionLog(state.companionLog, [
+      {
+        id: `sensor-reset-${Date.now()}`,
+        kind: "cmd",
+        line: `sensor_reset_${normalizeCommandLabel(plan.zoneId)}`,
+        body: `${plan.title}. ${plan.body}`,
+        tone: toneFromAlertLevel(plan.level),
+      },
+    ]);
+    draw();
+
+    try {
+      await applySimulationTweak(plan.tweak);
+      const correctedMission = await fetchMissionState();
+      state.mission = correctedMission;
+      lastMissionWatchKey = buildMissionWatchKey(correctedMission);
+      syncSelections(state);
+      const correctedZone = correctedMission.zones.find((zone) => zone.zoneId === plan.zoneId);
+      const resultingTone = correctedZone ? zoneTone(correctedZone) : "CAU";
+      const resultingLevel = alertFromTone(resultingTone);
+      const resultingStatus = correctedZone
+        ? formatZoneStatus(correctedZone.status)
+        : "status unavailable";
+      const resultingDetail = correctedZone
+        ? correctedZone.stress.active
+          ? `${plan.detail} ${plan.zoneId} sensors were normalized, but the zone remains ${resultingStatus} due to ${formatStressType(correctedZone.stress.type)} ${correctedZone.stress.severity}.`
+          : `${plan.detail} ${plan.zoneId} is now ${resultingStatus}.`
+        : plan.detail;
+      state.sensorNotification = {
+        ...state.sensorNotification,
+        level: resultingLevel,
+        body: correctedZone?.stress.active
+          ? `${plan.zoneId} sensor values were restored, but the zone remains ${resultingStatus}.`
+          : `${plan.zoneId} returned to nominal sensor targets and is now ${resultingStatus}.`,
+        detail: resultingDetail,
+      };
+      state.companionLog = mergeCompanionLog(state.companionLog, [
+        {
+          id: `sensor-reset-ok-${Date.now()}`,
+          kind: "fact",
+          line: `sensor_reset_complete_${normalizeCommandLabel(plan.zoneId)}`,
+          body: correctedZone?.stress.active
+            ? `${plan.zoneId} primary sensors were restored, but the zone remains ${resultingStatus} with ${formatStressType(correctedZone.stress.type)} ${correctedZone.stress.severity}.`
+            : `${plan.zoneId} primary sensors were restored and the zone is now ${resultingStatus}.`,
+          tone: resultingTone,
+        },
+      ]);
+    } catch (error) {
+      state.sensorNotification = {
+        ...state.sensorNotification,
+        level: "abt",
+        body: `Sensor reset failed: ${getErrorMessage(error)}`,
+        detail: "Check the simulation tweak route and retry.",
+      };
+      state.companionLog = mergeCompanionLog(state.companionLog, [
+        {
+          id: `sensor-reset-fail-${Date.now()}`,
+          kind: "fact",
+          line: `sensor_reset_failed_${normalizeCommandLabel(plan.zoneId)}`,
+          body: `Automatic sensor normalization failed: ${getErrorMessage(error)}`,
+          tone: "ABT",
+        },
+      ]);
+    }
+
+    return true;
   }
 
   function navigateToGreenhouse(greenhouseId: string): void {
@@ -1654,6 +1792,18 @@ function toneFromRiskLevel(riskLevel: BackendAgentAnalysis["riskLevel"]): Status
   }
 }
 
+function toneFromAlertLevel(level: AlertLevel): StatusTone {
+  if (level === "abt") {
+    return "ABT";
+  }
+
+  if (level === "cau") {
+    return "CAU";
+  }
+
+  return "NOM";
+}
+
 function normalizeCommandLabel(value: string): string {
   return value
     .toLowerCase()
@@ -1703,12 +1853,32 @@ function getLatestNonAiEvent(mission: BackendMissionState): BackendEventLogEntry
   return mission.eventLog.find((entry) => entry.type !== "ai_action");
 }
 
+function hasMissionIncident(
+  mission: BackendMissionState,
+  planner: BackendPlannerOutput | null = null,
+): boolean {
+  return (
+    Boolean(mission.activeScenario) ||
+    Boolean(planner?.nutritionRiskDetected) ||
+    mission.status !== "nominal" ||
+    mission.zones.some(
+      (zone) => zone.stress.active || zone.status === "critical" || zone.status === "offline",
+    )
+  );
+}
+
 function buildMissionWatchKey(mission: BackendMissionState): string {
   const latestNonAiEvent = getLatestNonAiEvent(mission);
   const zoneStateKey = mission.zones
     .map(
       (zone) =>
         `${zone.zoneId}:${zone.status}:${zone.stress.active ? zone.stress.type : "none"}:${zone.stress.severity}`,
+    )
+    .join("|");
+  const sensorKey = mission.zones
+    .map(
+      (zone) =>
+        `${zone.zoneId}:t${Math.round(zone.sensors.temperature * 10) / 10}:h${Math.round(zone.sensors.humidity)}:sm${Math.round(zone.sensors.soilMoisture)}:ph${Math.round(zone.sensors.nutrientPH * 10) / 10}`,
     )
     .join("|");
   const resourceKey = [
@@ -1724,6 +1894,7 @@ function buildMissionWatchKey(mission: BackendMissionState): string {
     mission.activeScenario?.scenarioId ?? "no-scenario",
     latestNonAiEvent?.eventId ?? "no-event",
     zoneStateKey,
+    sensorKey,
     resourceKey,
   ].join("::");
 }
@@ -1749,13 +1920,7 @@ function buildAutoAnalysisKey(
 ): string {
   const analysisFocus = focus ?? deriveAgentAnalysisFocus(mission, planner);
   const latestNonAiEvent = getLatestNonAiEvent(mission);
-  const hasIncident =
-    Boolean(mission.activeScenario) ||
-    Boolean(planner?.nutritionRiskDetected) ||
-    mission.status !== "nominal" ||
-    mission.zones.some(
-      (zone) => zone.stress.active || zone.status === "critical" || zone.status === "offline",
-    );
+  const hasIncident = hasMissionIncident(mission, planner);
 
   if (!hasIncident) {
     return "";
@@ -1959,11 +2124,143 @@ function syncSelections(state: AppState): void {
     : activeScenarioType || firstScenarioType;
 }
 
+function renderSensorNotification(notification: SensorNotification | null): string {
+  if (!notification) {
+    return "";
+  }
+
+  return `
+    <div class="sensor-notification-rail" aria-live="polite">
+      <article class="sensor-notification sensor-notification--${notification.level}">
+        <button
+          class="sensor-notification__close"
+          type="button"
+          aria-label="Dismiss sensor notification"
+          data-sensor-notification-close
+        >
+          ×
+        </button>
+        <p class="sensor-notification__label mono">SENSOR RESPONSE</p>
+        <p class="sensor-notification__title">${escapeHtml(notification.title)}</p>
+        <p class="sensor-notification__body">${escapeHtml(notification.body)}</p>
+        <p class="sensor-notification__detail mono">${escapeHtml(notification.detail)}</p>
+      </article>
+    </div>
+  `;
+}
+
+function detectSensorResetPlan(
+  mission: BackendMissionState,
+): SensorResetPlan | null {
+  for (const zone of mission.zones) {
+    const thresholds = SENSOR_THRESHOLDS[zone.cropType];
+    const nextZone: SensorResetPlan["tweak"]["zones"][number] = { zoneId: zone.zoneId };
+    const issueParts: string[] = [];
+    const targetParts: string[] = [];
+    const hardwareParts: string[] = [];
+    let level: AlertLevel = "cau";
+
+    if (
+      zone.sensors.temperature < thresholds.temperature.low ||
+      zone.sensors.temperature > thresholds.temperature.high
+    ) {
+      nextZone.temperature = midpoint(thresholds.temperature.low, thresholds.temperature.high);
+      issueParts.push(`temperature ${zone.sensors.temperature}°C`);
+      targetParts.push(`temperature ${nextZone.temperature}°C`);
+      hardwareParts.push("thermal loop");
+      if (
+        zone.sensors.temperature <= thresholds.temperature.criticalLow ||
+        zone.sensors.temperature >= thresholds.temperature.criticalHigh
+      ) {
+        level = "abt";
+      }
+    }
+
+    if (
+      zone.sensors.humidity < thresholds.humidity.low ||
+      zone.sensors.humidity > thresholds.humidity.high
+    ) {
+      nextZone.humidity = midpoint(thresholds.humidity.low, thresholds.humidity.high);
+      issueParts.push(`humidity ${zone.sensors.humidity}%`);
+      targetParts.push(`humidity ${nextZone.humidity}%`);
+      hardwareParts.push(
+        zone.sensors.humidity < thresholds.humidity.low
+          ? "humidifier loop"
+          : "dehumidifier loop",
+      );
+      if (
+        zone.sensors.humidity <= thresholds.humidity.criticalLow ||
+        zone.sensors.humidity >= thresholds.humidity.criticalHigh
+      ) {
+        level = "abt";
+      }
+    }
+
+    if (
+      zone.sensors.soilMoisture < thresholds.soilMoisture.low ||
+      zone.sensors.soilMoisture > thresholds.soilMoisture.high
+    ) {
+      nextZone.soilMoisture = midpoint(
+        thresholds.soilMoisture.low,
+        thresholds.soilMoisture.high,
+      );
+      issueParts.push(`soil moisture ${zone.sensors.soilMoisture}%`);
+      targetParts.push(`soil moisture ${nextZone.soilMoisture}%`);
+      hardwareParts.push("irrigation loop");
+      if (
+        zone.sensors.soilMoisture <= thresholds.soilMoisture.criticalLow ||
+        zone.sensors.soilMoisture >= thresholds.soilMoisture.criticalHigh
+      ) {
+        level = "abt";
+      }
+    }
+
+    if (
+      zone.sensors.nutrientPH < thresholds.nutrientPH.low ||
+      zone.sensors.nutrientPH > thresholds.nutrientPH.high
+    ) {
+      nextZone.nutrientPH = midpoint(thresholds.nutrientPH.low, thresholds.nutrientPH.high);
+      issueParts.push(`nutrient pH ${zone.sensors.nutrientPH}`);
+      targetParts.push(`nutrient pH ${nextZone.nutrientPH}`);
+      hardwareParts.push("pH correction loop");
+      if (
+        zone.sensors.nutrientPH <= thresholds.nutrientPH.criticalLow ||
+        zone.sensors.nutrientPH >= thresholds.nutrientPH.criticalHigh
+      ) {
+        level = "abt";
+      }
+    }
+
+    const affectedFields = Object.keys(nextZone).filter((key) => key !== "zoneId");
+
+    if (affectedFields.length > 0) {
+      return {
+        key: `${zone.zoneId}:${affectedFields.sort().join("+")}`,
+        zoneId: zone.zoneId,
+        level,
+        title: `Activating ${dedupeStrings(hardwareParts).join(", ")} in ${zone.zoneId}`,
+        body: `${zone.zoneId} drift detected in ${issueParts.join(" · ")}.`,
+        detail: `Returning ${targetParts.join(" · ")} to the nominal operating band.`,
+        tweak: {
+          zones: [nextZone],
+        },
+      };
+    }
+  }
+
+  return null;
+}
+
 function deriveAgentSuggestedMission(
   mission: BackendMissionState,
   agent: BackendAgentAnalysis | null,
 ): BackendMissionState {
-  if (!agent || agent.recommendedActions.length === 0 || agent.riskLevel === "low") {
+  if (
+    !hasMissionIncident(mission) ||
+    !agent ||
+    agent.recommendedActions.length === 0 ||
+    agent.riskLevel === "low"
+  ) {
     return mission;
   }
 
@@ -2859,69 +3156,6 @@ const SENSOR_THRESHOLDS: Record<
   },
 };
 
-function evaluateSensorThreshold(
-  value: number,
-  threshold: SensorThreshold,
-): { tone: StatusTone; state: string } {
-  if (value <= threshold.criticalLow) {
-    return { tone: "ABT", state: "critical low" };
-  }
-
-  if (value >= threshold.criticalHigh) {
-    return { tone: "ABT", state: "critical high" };
-  }
-
-  if (value < threshold.low) {
-    return { tone: "CAU", state: "low" };
-  }
-
-  if (value > threshold.high) {
-    return { tone: "CAU", state: "high" };
-  }
-
-  return { tone: "NOM", state: "nominal" };
-}
-
-function buildSensorReadings(zone: BackendCropZone): SensorReadingData[] {
-  const thresholds = SENSOR_THRESHOLDS[zone.cropType];
-
-  return [
-    {
-      label: "Temp",
-      value: `${zone.sensors.temperature} C`,
-      ...evaluateSensorThreshold(zone.sensors.temperature, thresholds.temperature),
-    },
-    {
-      label: "Humidity",
-      value: `${zone.sensors.humidity}%`,
-      ...evaluateSensorThreshold(zone.sensors.humidity, thresholds.humidity),
-    },
-    {
-      label: "PAR",
-      value: `${zone.sensors.lightPAR}`,
-      ...evaluateSensorThreshold(zone.sensors.lightPAR, thresholds.lightPAR),
-    },
-    {
-      label: "Moisture",
-      value: `${zone.sensors.soilMoisture}%`,
-      ...evaluateSensorThreshold(zone.sensors.soilMoisture, thresholds.soilMoisture),
-    },
-    {
-      label: "pH",
-      value: `${zone.sensors.nutrientPH}`,
-      ...evaluateSensorThreshold(zone.sensors.nutrientPH, thresholds.nutrientPH),
-    },
-    {
-      label: "EC",
-      value: `${zone.sensors.electricalConductivity} mS`,
-      ...evaluateSensorThreshold(
-        zone.sensors.electricalConductivity,
-        thresholds.electricalConductivity,
-      ),
-    },
-  ];
-}
-
 function renderMetricTile(item: MetricTileData): string {
   return renderKpiTile({
     label: item.label,
@@ -2931,100 +3165,6 @@ function renderMetricTile(item: MetricTileData): string {
     progressColor: item.progressColor,
     level: item.level,
   });
-}
-
-function renderZoneOperationsCard(
-  zone: BackendCropZone,
-  isSelected: boolean,
-  interactive = true,
-): string {
-  const sensorReadings = buildSensorReadings(zone);
-  const symptoms = zone.stress.symptoms.slice(0, 3);
-  const tag = interactive ? "button" : "div";
-  const interactionAttrs = interactive
-    ? `type="button" data-zone-select="${escapeHtml(zone.zoneId)}"`
-    : "";
-
-  return `
-    <${tag}
-      ${interactionAttrs}
-      class="zone-ops-card ${zoneStatusClass(zone)} ${isSelected ? "is-selected" : ""} ${interactive ? "" : "zone-ops-card--static"}"
-    >
-      <div class="zone-ops-card__head">
-        <div>
-          <p class="zone-ops-card__zone mono">${escapeHtml(zone.zoneId)}</p>
-          <p class="zone-ops-card__name">${escapeHtml(zone.name)}</p>
-          <p class="zone-ops-card__meta">${escapeHtml(formatCropType(zone.cropType))}</p>
-        </div>
-        <div class="zone-ops-card__badges">
-          ${renderStatusBadge(formatZoneStatus(zone.status), zoneTone(zone))}
-          ${
-            zone.stress.active
-              ? renderStatusBadge(
-                  `${formatStressType(zone.stress.type)} ${zone.stress.severity}`,
-                  zoneTone(zone),
-                )
-              : renderStatusBadge("stable", "NOM")
-          }
-        </div>
-      </div>
-
-      <div class="zone-ops-card__metrics">
-        <div class="zone-ops-card__metric">
-          <span class="zone-ops-card__metric-label">Cycle</span>
-          <span class="zone-ops-card__metric-value mono">${zone.growthDay}/${zone.growthCycleDays} d</span>
-        </div>
-        <div class="zone-ops-card__metric">
-          <span class="zone-ops-card__metric-label">Progress</span>
-          <span class="zone-ops-card__metric-value mono">${zone.growthProgressPercent}%</span>
-        </div>
-        <div class="zone-ops-card__metric">
-          <span class="zone-ops-card__metric-label">Projected Yield</span>
-          <span class="zone-ops-card__metric-value mono">${zone.projectedYieldKg.toFixed(1)} kg</span>
-        </div>
-        <div class="zone-ops-card__metric">
-          <span class="zone-ops-card__metric-label">Allocation</span>
-          <span class="zone-ops-card__metric-value mono">${zone.allocationPercent}%</span>
-        </div>
-      </div>
-
-      <div class="ui-kpi__bar zone-ops-card__progress">
-        <span style="width:${zone.growthProgressPercent}%; background:${toneColor(zoneTone(zone))}"></span>
-      </div>
-
-      <div class="zone-ops-card__stress">
-        <p class="zone-ops-card__stress-text">${escapeHtml(zone.stress.summary)}</p>
-        ${
-          zone.stress.boltingRisk
-            ? `<p class="zone-ops-card__risk">Bolting risk active</p>`
-            : ""
-        }
-        ${
-          symptoms.length > 0
-            ? `<div class="zone-ops-card__symptoms">${symptoms
-                .map((symptom) => renderStatusBadge(symptom.replaceAll("_", " "), zoneTone(zone)))
-                .join("")}</div>`
-            : ""
-        }
-      </div>
-
-      <div class="zone-ops-card__sensor-grid">
-        ${sensorReadings
-          .map(
-            (reading) => `
-              <div class="zone-sensor">
-                <div class="zone-sensor__head">
-                  <span class="zone-sensor__label">${reading.label}</span>
-                  ${renderStatusBadge(reading.state, reading.tone)}
-                </div>
-                <div class="zone-sensor__value mono">${reading.value}</div>
-              </div>
-            `,
-          )
-          .join("")}
-      </div>
-    </${tag}>
-  `;
 }
 
 function renderCropHealthCard(zone: BackendCropZone, isSelected: boolean): string {
@@ -3465,12 +3605,6 @@ function toneFromEnergyReserve(hours: number): StatusTone {
   return "ABT";
 }
 
-function zoneStatusClass(zone: BackendCropZone): string {
-  const tone = zoneTone(zone).toLowerCase();
-  const offline = zone.status === "offline" ? " cell-offline" : "";
-  return `status-${tone}${offline}`;
-}
-
 function logTypeFromEvent(entry: BackendEventLogEntry): "act" | "wrn" | "alr" | "inf" {
   if (entry.type === "ai_action") {
     return "act";
@@ -3517,6 +3651,14 @@ function alertFromTone(tone: StatusTone): AlertLevel {
   }
 
   return "nom";
+}
+
+function midpoint(min: number, max: number): number {
+  return Math.round(((min + max) / 2) * 10) / 10;
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function noticeFromTone(tone: StatusTone): "ok" | "info" | "warn" | "crit" {

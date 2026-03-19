@@ -146,9 +146,14 @@ function main(): void {
     "Single-zone control failure",
   );
   const failedZone = singleZoneFailure.missionState.zones.find((zone) => zone.zoneId === "zone-C");
+  const unaffectedZone = singleZoneFailure.missionState.zones.find((zone) => zone.zoneId === "zone-A");
   assert(
     failedZone?.status === "offline",
     "Single-zone control failure did not isolate the affected zone",
+  );
+  assert(
+    unaffectedZone?.stress.severity === "none",
+    "Single-zone control failure unexpectedly stressed an unaffected zone",
   );
   assert(
     singleZoneFailure.missionState.eventLog[0]?.message ===

@@ -31,6 +31,31 @@ type AgentAnalysisRequest = {
   autoApply?: boolean;
 };
 
+type SimulationTweakRequest = {
+  zones?: Array<{
+    zoneId: string;
+    temperature?: number;
+    humidity?: number;
+    co2Ppm?: number;
+    lightPAR?: number;
+    photoperiodHours?: number;
+    nutrientPH?: number;
+    electricalConductivity?: number;
+    soilMoisture?: number;
+  }>;
+  resources?: {
+    waterRecyclingEfficiency?: number;
+    waterDailyConsumptionL?: number;
+    waterReservoirL?: number;
+    energyAvailableKwh?: number;
+    energyConsumptionKwhPerDay?: number;
+    solarGenerationKwhPerDay?: number;
+    nutrientN?: number;
+    nutrientP?: number;
+    nutrientK?: number;
+  };
+};
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3001").replace(/\/$/, "");
 const AI_BASE = (import.meta.env.VITE_AI_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const AI_ANALYZE_TIMEOUT_MS = 20000;
@@ -503,5 +528,14 @@ export function resetSimulation(): Promise<BackendMissionState> {
   return requestJson<MissionState>("/api/simulation/reset", {
     method: "POST",
     body: JSON.stringify({}),
+  }).then(mapMissionState);
+}
+
+export function applySimulationTweak(
+  payload: SimulationTweakRequest,
+): Promise<BackendMissionState> {
+  return requestJson<MissionState>("/api/simulation/tweak", {
+    method: "POST",
+    body: JSON.stringify(payload),
   }).then(mapMissionState);
 }
