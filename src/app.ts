@@ -1703,7 +1703,7 @@ function renderRisk(
           title: "Logs",
           dotColor: "var(--abt)",
           rightSlot: mission.activeScenario
-            ? '<button class="btn btn-danger" type="button" data-scenario-reset="true">Reset scenario</button>'
+            ? renderStatusBadge("Active scenario", "ABT")
             : renderStatusBadge("No active scenario", "NOM"),
           children: `
             <div class="risk-emergency-list">
@@ -2151,51 +2151,27 @@ function buildAutoAnalysisLogItems(
   focus: AgentAnalysisFocus,
 ): CompanionLogItem[] {
   const tone = toneFromRiskLevel(agent.riskLevel);
-  const items: CompanionLogItem[] = [
+  const explanation = agent.explanation.trim() || agent.riskSummary.trim();
+
+  return [
     {
       id: `auto-analysis-${Date.now()}`,
       kind: "cmd",
       line: `auto_analyze_${normalizeCommandLabel(focus)}`,
-      body: agent.riskSummary,
+      body: explanation,
       tone,
     },
   ];
-
-  if (agent.recommendedActions.length > 0) {
-    items.push({
-      id: `auto-analysis-actions-${Date.now()}`,
-      kind: "next",
-      line: "recommended_reallocation",
-      body: agent.recommendedActions
-        .slice(0, 3)
-        .map((action) =>
-          action.targetZoneId
-            ? `${action.targetZoneId}: ${formatActionType(action.type)}`
-            : formatActionType(action.type),
-        )
-        .join(" · "),
-      tone,
-    });
-  }
-
-  return items;
 }
 
 function buildAutoAnalysisMessage(
   agent: BackendAgentAnalysis,
   focus: AgentAnalysisFocus,
 ): CompanionMessage {
-  const actionSummary = agent.recommendedActions
-    .slice(0, 2)
-    .map((action) =>
-      action.targetZoneId ? `${action.targetZoneId}: ${formatActionType(action.type)}` : formatActionType(action.type),
-    )
-    .join(" · ");
-
   return {
     id: `auto-brief-${Date.now()}`,
     role: "agent",
-    text: `${agent.riskSummary} ${agent.explanation}${actionSummary ? ` Recommended actions: ${actionSummary}.` : ""}`,
+    text: agent.explanation.trim() || agent.riskSummary.trim(),
     meta: `auto incident brief · ${focus.replaceAll("_", " ")}`,
   };
 }

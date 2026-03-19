@@ -1,4 +1,5 @@
 import { CROP_PROFILES } from "../../data/cropProfiles.data";
+import { SCENARIO_CATALOG } from "../../data/scenarios.data";
 import type { AgentAnalyzeRequest } from "../../schemas/agent.schema";
 import { buildMissionSnapshot, getCurrentMissionSnapshot } from "../mission/mission.service";
 import { getMissionState, setMissionState } from "../mission/mission.store";
@@ -60,6 +61,111 @@ function describePrimaryZoneAnomaly(state: MissionState): string | null {
   return `${primaryZone.zoneId} is under ${primaryZone.stress.severity} ${primaryZone.stress.type} stress`;
 }
 
+function formatScenarioLabel(scenarioType: MissionState["activeScenario"] extends infer T
+  ? T extends { scenarioType: infer S }
+    ? S
+    : never
+  : never): string {
+  return SCENARIO_CATALOG[scenarioType].label;
+}
+
+function formatStressType(type: MissionState["zones"][number]["stress"]["type"]): string {
+  switch (type) {
+    case "water_deficit":
+      return "water stress";
+    case "light_deficit":
+      return "light deficit";
+    case "energy_shortage":
+      return "energy shortage";
+    case "nitrogen_deficiency":
+      return "nutrient deficiency";
+    default:
+      return type.replaceAll("_", " ");
+  }
+}
+
+function formatZoneList(zoneIds: string[]): string {
+  if (zoneIds.length === 0) {
+    return "the crop bays";
+  }
+
+  if (zoneIds.length === 1) {
+    return zoneIds[0];
+  }
+
+  if (zoneIds.length === 2) {
+    return `${zoneIds[0]} and ${zoneIds[1]}`;
+  }
+
+  return `${zoneIds.slice(0, -1).join(", ")}, and ${zoneIds.at(-1)}`;
+}
+
+function describeScenarioHeadline(state: MissionState): string {
+  const scenario = state.activeScenario;
+
+  if (!scenario) {
+    return "Greenhouse operations are under abnormal stress.";
+  }
+
+  switch (scenario.scenarioType) {
+    case "energy_budget_reduction":
+      return `Mission day ${state.missionDay} is operating under a critical energy shortfall.`;
+    case "water_recycling_decline":
+      return `Mission day ${state.missionDay} is operating under a critical water recovery decline.`;
+    case "temperature_control_failure":
+      return `Mission day ${state.missionDay} is dealing with a greenhouse-wide climate control failure.`;
+    case "single_zone_control_failure":
+      return `Mission day ${state.missionDay} is responding to a local control failure in ${scenario.affectedZones[0] ?? "one crop bay"}.`;
+    default:
+      return `${formatScenarioLabel(scenario.scenarioType)} is affecting greenhouse operations.`;
+  }
+}
+
+function buildScenarioStateDetail(state: MissionState): string {
+  const scenario = state.activeScenario;
+
+  if (!scenario) {
+    return "";
+  }
+
+  switch (scenario.scenarioType) {
+    case "energy_budget_reduction":
+      return `Available power is ${state.resources.energyAvailableKwh} kWh against a ${state.resources.energyConsumptionKwhPerDay} kWh/day draw, leaving ${state.resources.energyDaysRemaining} days of energy buffer.`;
+    case "water_recycling_decline":
+      return `Water recovery has fallen to ${state.resources.waterRecyclingEfficiency}%, leaving ${state.resources.waterDaysRemaining} days of water runway at the current loss rate.`;
+    case "temperature_control_failure": {
+      const hottestZone = [...state.zones].sort(
+        (left, right) => right.sensors.temperature - left.sensors.temperature,
+      )[0];
+      return `${formatZoneList(state.zones.map((zone) => zone.zoneId))} are running hot, with ${hottestZone.zoneId} at ${hottestZone.sensors.temperature} C.`;
+    }
+    case "single_zone_control_failure": {
+      const failedZoneId = scenario.affectedZones[0] ?? "the affected bay";
+      return `${failedZoneId} has lost local irrigation, lighting, and environmental control support and must be isolated from the shared resource pool.`;
+    }
+    default:
+      return scenario.description;
+  }
+}
+
+function buildNutritionContext(state: MissionState): string {
+  return `Current production is covering ${state.nutrition.caloricCoveragePercent}% of calories and ${state.nutrition.proteinCoveragePercent}% of protein, with ${state.nutrition.daysSafe} safe days remaining.`;
+}
+
+function buildZoneStressContext(state: MissionState): string {
+  const affectedZones = state.zones.filter((zone) => zone.status !== "healthy" || zone.stress.active);
+
+  if (affectedZones.length === 0) {
+    return "The remaining crop bays are still holding nominal environmental conditions.";
+  }
+
+  return affectedZones
+    .slice(0, 3)
+    .map((zone) => `${zone.zoneId} is under ${zone.stress.severity} ${formatStressType(zone.stress.type)}`)
+    .join("; ")
+    .concat(".");
+}
+
 function detectAgentTrigger(state: MissionState): AgentTriggerResult {
   const hasCriticalZone = state.zones.some((zone) => {
     return zone.status === "critical" || zone.status === "offline" || zone.stress.severity === "critical";
@@ -81,7 +187,7 @@ function detectAgentTrigger(state: MissionState): AgentTriggerResult {
       riskLevel: "critical",
       triggerReason:
         state.activeScenario !== null
-          ? `Scenario ${state.activeScenario.scenarioType} is driving critical greenhouse conditions.`
+          ? `${formatScenarioLabel(state.activeScenario.scenarioType)} is driving critical greenhouse conditions.`
           : zoneSummary ?? "Critical nutrition continuity risk threshold breached.",
     };
   }
@@ -99,7 +205,7 @@ function detectAgentTrigger(state: MissionState): AgentTriggerResult {
       riskLevel: "high",
       triggerReason:
         state.activeScenario !== null
-          ? `Scenario ${state.activeScenario.scenarioType} requires deterministic response review.`
+          ? `${formatScenarioLabel(state.activeScenario.scenarioType)} requires response review.`
           : zoneSummary ?? "Warning-level mission degradation detected.",
     };
   }
@@ -201,11 +307,11 @@ function buildRiskSummary(input: {
   }
 
   if (focus === "nutrition_risk") {
-    return `Nutrition score is ${state.nutrition.nutritionalCoverageScore} with ${state.nutrition.daysSafe} safe days remaining. ${autoApply ? "Planner actions were auto-applied." : execution.recommendedActions.length > 0 ? "Planner actions are ready for review." : "No planner action was generated."}`;
+    return `Nutrition score is ${state.nutrition.nutritionalCoverageScore} with ${state.nutrition.daysSafe} safe days remaining. ${execution.recommendedActions.length > 0 ? (autoApply ? "The current preservation plan has already been applied." : "The planner has prepared a preservation response.") : "The greenhouse is still staying above the automatic preservation threshold."}`;
   }
 
   if (focus === "scenario_response") {
-    return `${primaryScenario} is the current trigger. ${trigger.triggerReason}`;
+    return trigger.triggerReason;
   }
 
   return `Mission status is ${state.status}. ${trigger.triggerReason}`;
@@ -221,17 +327,18 @@ function buildExplanation(input: {
 
   if (execution.recommendedActions.length === 0) {
     if (trigger.detected) {
-      return `${trigger.triggerReason}. The deterministic planner did not enter Nutrition Preservation Mode because projected calories and protein remain above the automatic intervention thresholds.`;
+      return `${describeScenarioHeadline(state)} ${buildScenarioStateDetail(state)} ${buildNutritionContext(state)} The planner is keeping the greenhouse in normal mode for now because nutrition output remains above the automatic preservation threshold, but the incident still requires close monitoring.`;
     }
 
-    return "The deterministic planner found no need to enter Nutrition Preservation Mode. The greenhouse remains within acceptable nutrition continuity thresholds.";
+    return "The greenhouse remains within acceptable nutrition continuity thresholds, so no preservation intervention is being prepared.";
   }
 
   if (state.activeScenario?.scenarioType === "single_zone_control_failure") {
-    return `${state.activeScenario.affectedZones[0] ?? "The failed bay"} has lost local control support. The planner isolates that zone, then redistributes shared water and lighting capacity toward the remaining calorie and protein crops. ${autoApply ? "Those redistribution actions were auto-applied." : "Those redistribution actions are ready for operator approval."} ${execution.explanation}`;
+    const failedZoneId = state.activeScenario.affectedZones[0] ?? "the failed bay";
+    return `${describeScenarioHeadline(state)} ${buildScenarioStateDetail(state)} The planner is isolating ${failedZoneId} and redistributing shared water and lighting toward the remaining calorie and protein crops, with potatoes protected first for calories and beans second for protein. ${buildNutritionContext(state)} ${buildZoneStressContext(state)} ${autoApply ? "Those resource shifts have already been applied to the live mission state." : "Those resource shifts are the current recommended response."}`;
   }
 
-  return `${state.activeScenario ? `${state.activeScenario.scenarioType} is the active trigger.` : "The greenhouse is under abnormal stress."} The planner protects potatoes first for calories and beans second for protein, then accepts controlled cuts to lower-priority crops. ${autoApply ? "Those actions were auto-applied to the mission state." : "Those actions are prepared for operator approval."} ${execution.explanation}`;
+  return `${describeScenarioHeadline(state)} ${buildScenarioStateDetail(state)} The planner is protecting potatoes first for calories and beans second for protein while trimming lower-priority support where necessary. ${buildNutritionContext(state)} ${buildZoneStressContext(state)} ${autoApply ? "Those actions have already been applied to the live mission state." : "Those actions are the current recommended response."}`;
 }
 
 function appendAiActionEvent(state: MissionState, timestamp: string, message: string): MissionState {

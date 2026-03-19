@@ -294,6 +294,9 @@ Rules:
 - Do not invent sensor values, nutrition values, planner actions, or before/after numbers
 - Do not restate the full tool payload
 - Keep the output concise and operational
+- Make the explanation feel specific to this live mission snapshot, not like a canned scenario card
+- Avoid phrases that sound prewritten or static, such as "is the current trigger" or "actions are ready for operator approval", unless the tool outputs explicitly support them
+- Explain why these exact actions make sense now for this state, not just what the planner generally does
 - Return ONLY JSON, no markdown
 """
 
@@ -462,7 +465,24 @@ def _overlay_llm_fields(
     - riskLevel when it remains within the canonical enum
     """
     payload = base.model_dump()
-    allow_narrative_overlay = not preserve_emergency_narrative
+    allow_narrative_overlay = True
+
+    if preserve_emergency_narrative:
+        narrative_text = " ".join(
+            [
+                llm_data.get("riskSummary", "") if isinstance(llm_data.get("riskSummary"), str) else "",
+                llm_data.get("explanation", "") if isinstance(llm_data.get("explanation"), str) else "",
+            ],
+        ).lower()
+        contradiction_markers = (
+            "everything is healthy",
+            "all zones healthy",
+            "mission is nominal",
+            "no intervention required",
+            "no action required",
+        )
+        if any(marker in narrative_text for marker in contradiction_markers):
+            allow_narrative_overlay = False
 
     if isinstance(llm_data.get("decisionId"), str) and llm_data["decisionId"].strip():
         payload["decisionId"] = llm_data["decisionId"].strip()
