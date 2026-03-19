@@ -4,13 +4,16 @@ Wraps a Strands Agent with the tool set and model configuration.
 Provides two entry points: analyze() and chat().
 """
 from __future__ import annotations
+from contextlib import contextmanager
 import json
 import os
 import re
 from datetime import datetime, timezone
 
+from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.models import BedrockModel
+from strands.tools.mcp.mcp_client import MCPClient
 
 from models import (
     AIDecision, AnalyzeRequest, BeforeAfterComparison, BeforeAfterDelta,
@@ -20,6 +23,7 @@ from models import (
 from tools import (
     getMissionState, getRecentMissionLog, runPlannerAnalysis,
     getScenarioCatalog, locateDashboardSection, searchKnowledgeBase,
+    kb_was_used, reset_kb_usage,
     _client,
 )
 
@@ -32,12 +36,36 @@ def _get_model_limits() -> tuple[int, float]:
     return max_tokens, temperature
 
 
+def _get_model_provider() -> str:
+    """
+    Resolve the preferred model provider.
+
+    Priority:
+    1. explicit MODEL_PROVIDER
+    2. Bedrock if AWS-oriented env is present
+    3. direct provider fallbacks
+    """
+    explicit = os.getenv("MODEL_PROVIDER")
+    if explicit:
+        return explicit.strip().lower()
+
+    if os.getenv("BEDROCK_MODEL_ID") or os.getenv("AWS_REGION"):
+        return "bedrock"
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    return "bedrock"
+
+
 def _build_model():
     """Build the Strands model from environment config."""
     max_tokens, temperature = _get_model_limits()
+    provider = _get_model_provider()
 
-    # Check for Anthropic direct
-    if os.getenv("ANTHROPIC_API_KEY"):
+    if provider == "anthropic":
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise RuntimeError("MODEL_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set")
         from strands.models import AnthropicModel  # type: ignore
         return AnthropicModel(
             client_args={
@@ -50,8 +78,9 @@ def _build_model():
             },
         )
 
-    # Check for OpenAI
-    if os.getenv("OPENAI_API_KEY"):
+    if provider == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError("MODEL_PROVIDER=openai but OPENAI_API_KEY is not set")
         from strands.models import OpenAIModel  # type: ignore
         return OpenAIModel(
             model_id=os.getenv("OPENAI_MODEL_ID", "gpt-4o-mini"),
@@ -64,7 +93,9 @@ def _build_model():
             },
         )
 
-    # Default: Bedrock
+    if provider != "bedrock":
+        raise RuntimeError(f"Unsupported MODEL_PROVIDER={provider}")
+
     region = os.getenv("AWS_REGION", "us-east-1")
     model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-haiku-4-5-20251001-v1:0")
     return BedrockModel(
@@ -75,8 +106,17 @@ def _build_model():
     )
 
 
-_TOOLS = [getMissionState, getRecentMissionLog, runPlannerAnalysis,
-          getScenarioCatalog, locateDashboardSection, searchKnowledgeBase]
+_LOCAL_TOOLS = [
+    getMissionState,
+    getRecentMissionLog,
+    runPlannerAnalysis,
+    getScenarioCatalog,
+    locateDashboardSection,
+    searchKnowledgeBase,
+]
+_LOCAL_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
+OPS_MCP_URL = os.getenv("OPS_MCP_URL")
+OPS_MCP_AUTH_TOKEN = os.getenv("OPS_MCP_AUTH_TOKEN")
 
 _RISK_LEVELS = {"low", "moderate", "high", "critical"}
 
@@ -92,19 +132,60 @@ Your role:
 Rules:
 - Always call getMissionState() before any analysis
 - Never invent mission values not present in tool outputs
+- Backend tools own live operational truth: current sensors, nutrition, planner output, mission status
+- searchKnowledgeBase() is explanation-only: use it for crop science, thresholds, Mars constraints, and mitigation rationale
+- If KB context conflicts with live backend values, backend values win
 - Be concise and operational — operators are under pressure
 - When pointing to dashboard sections, use locateDashboardSection()
 - For KB questions, use searchKnowledgeBase()
 """
 
 
-def _make_agent() -> Agent:
+def _ops_mcp_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json, text/event-stream"}
+    if OPS_MCP_AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {OPS_MCP_AUTH_TOKEN}"
+    return headers
+
+
+def _load_all_mcp_tools(mcp_client: MCPClient):
+    tools = []
+    pagination_token = None
+    while True:
+        page = mcp_client.list_tools_sync(pagination_token)
+        tools.extend(list(page))
+        pagination_token = getattr(page, "pagination_token", None)
+        if pagination_token is None:
+            break
+    return tools
+
+
+@contextmanager
+def _agent_tool_context():
+    """
+    Use MCP for operational tools when available.
+    Local backend tools remain the fallback and the source of deterministic truth.
+    """
+    if not OPS_MCP_URL:
+        yield _LOCAL_TOOLS
+        return
+
+    client = MCPClient(lambda: streamablehttp_client(OPS_MCP_URL, headers=_ops_mcp_headers()))
+    try:
+        client.start()
+        mcp_tools = _load_all_mcp_tools(client)
+        yield [*mcp_tools, *_LOCAL_NON_OPERATIONAL_TOOLS]
+    finally:
+        client.stop(None, None, None)
+
+
+def _make_agent(tools) -> Agent:
     """Create a fresh Strands agent instance."""
     model = _build_model()
     return Agent(
         model=model,
         system_prompt=_SYSTEM_PROMPT,
-        tools=_TOOLS,
+        tools=tools,
     )
 
 
@@ -113,9 +194,16 @@ def _make_agent() -> Agent:
 _ANALYZE_PROMPT = """Analyze the current Mars Greenhouse mission state.
 
 Steps:
+<<<<<<< HEAD
 1. Call getMissionState() to get current state
 2. Call runPlannerAnalysis() to get planner recommendations
 3. Produce a JSON object matching this exact schema:
+=======
+1. Call getMissionState()
+2. Call runPlannerAnalysis()
+3. If agronomy or mission rationale would improve the explanation, call searchKnowledgeBase() with a focused query
+4. Return ONLY this compact JSON object:
+>>>>>>> 3d97219 (feat: amazon bedrock)
 
 {{
   "decisionId": "<string>",
@@ -148,9 +236,20 @@ Steps:
   "kbContextUsed": <bool>
 }}
 
+<<<<<<< HEAD
 CRITICAL: Use ONLY values from getMissionState() and runPlannerAnalysis() outputs.
 Do NOT invent sensor readings, nutrition numbers, or zone values.
 Return ONLY the JSON object, no markdown, no extra text.
+=======
+Rules:
+- Ground every statement in getMissionState() and runPlannerAnalysis()
+- Use searchKnowledgeBase() only for explanation, thresholds, or mitigation rationale
+- Do not use searchKnowledgeBase() as the source of live mission values
+- Do not invent sensor values, nutrition values, planner actions, or before/after numbers
+- Do not restate the full tool payload
+- Keep the output concise and operational
+- Return ONLY JSON, no markdown
+>>>>>>> 3d97219 (feat: amazon bedrock)
 """
 
 
@@ -299,6 +398,11 @@ def _overlay_llm_fields(
     *,
     base: AIDecision,
     llm_data: dict,
+<<<<<<< HEAD
+=======
+    kb_context_used: bool,
+    preserve_emergency_narrative: bool = False,
+>>>>>>> 3d97219 (feat: amazon bedrock)
 ) -> AIDecision:
     """
     Merge LLM-authored narrative fields onto the deterministic base decision.
@@ -341,7 +445,7 @@ def _overlay_llm_fields(
     if isinstance(llm_data.get("explanation"), str) and llm_data["explanation"].strip():
       payload["explanation"] = llm_data["explanation"].strip()
 
-    payload["kbContextUsed"] = True
+    payload["kbContextUsed"] = kb_context_used
 
     return AIDecision.model_validate(payload)
 
@@ -365,14 +469,30 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
 
     prompt = _ANALYZE_PROMPT + focus_hint
     fallback_decision = _fallback_analyze(mission, planner)
+    reset_kb_usage()
 
     try:
-        agent = _make_agent()
-        result = agent(prompt)
+        with _agent_tool_context() as tools:
+            agent = _make_agent(tools)
+            result = agent(prompt)
         # Strands returns an AgentResult; get the text content
         response_text = str(result)
         data = _extract_json(response_text)
+<<<<<<< HEAD
         return _overlay_llm_fields(base=fallback_decision, llm_data=data)
+=======
+        preserve_emergency_narrative = (
+            mission.status != "nominal"
+            or mission.activeScenario is not None
+            or fallback_decision.riskLevel in {"high", "critical"}
+        )
+        return _overlay_llm_fields(
+            base=fallback_decision,
+            llm_data=data,
+            kb_context_used=kb_was_used(),
+            preserve_emergency_narrative=preserve_emergency_narrative,
+        )
+>>>>>>> 3d97219 (feat: amazon bedrock)
     except Exception as e:
         # Fallback: deterministic analysis from tool outputs
         print(f"[agent] LLM unavailable ({type(e).__name__}: {e}), using deterministic fallback")
@@ -574,14 +694,16 @@ def chat(request: ChatRequest) -> ChatResponse:
 
 Use the available tools to answer accurately. Ground all facts in tool outputs.
 Return ONLY a JSON object matching the ChatResponse schema."""
+    reset_kb_usage()
 
     try:
-        agent = Agent(
-            model=_build_model(),
-            system_prompt=_CHAT_SYSTEM,
-            tools=_TOOLS,
-        )
-        result = agent(prompt)
+        with _agent_tool_context() as tools:
+            agent = Agent(
+                model=_build_model(),
+                system_prompt=_CHAT_SYSTEM,
+                tools=tools,
+            )
+            result = agent(prompt)
         response_text = str(result)
         data = _extract_json(response_text)
         return ChatResponse.model_validate(data)
