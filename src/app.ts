@@ -177,10 +177,6 @@ export function renderApp(root: HTMLDivElement): void {
       if (zoneId) {
         state.selectedZoneId = zoneId;
 
-        if (zoneTrigger.closest(".overview-zone-ops")) {
-          state.activeTab = "crops";
-        }
-
         draw();
       }
 
@@ -602,23 +598,45 @@ function renderCrops(mission: BackendMissionState, selectedZoneId: string): stri
           })}
         </div>
 
-        ${renderPanel({
-          title: "Zone Yield Outlook",
-          dotColor: "var(--mars-orange)",
-          children: `
-            ${renderDataTable({
-              columns: ["Zone", "Crop", "Day", "Progress", "Projected Yield", "Status"],
-              rows: mission.zones.map((zone) => [
-                `<span class="mono">${zone.zoneId}</span>`,
-                escapeHtml(zone.name),
-                `<span class="mono">${zone.growthDay}/${zone.growthCycleDays}</span>`,
-                `<span class="mono">${zone.growthProgressPercent}%</span>`,
-                `<span class="mono">${zone.projectedYieldKg.toFixed(1)} kg</span>`,
-                renderStatusBadge(formatZoneStatus(zone.status), zoneTone(zone)),
-              ]),
-            })}
-          `,
-        })}
+        <div class="crop-detail-secondary">
+          ${renderPanel({
+            title: "Zone Yield Outlook",
+            dotColor: "var(--mars-orange)",
+            children: `
+              ${renderDataTable({
+                columns: ["Zone", "Crop", "Day", "Progress", "Projected Yield", "Status"],
+                rows: mission.zones.map((zone) => [
+                  `<span class="mono">${zone.zoneId}</span>`,
+                  escapeHtml(zone.name),
+                  `<span class="mono">${zone.growthDay}/${zone.growthCycleDays}</span>`,
+                  `<span class="mono">${zone.growthProgressPercent}%</span>`,
+                  `<span class="mono">${zone.projectedYieldKg.toFixed(1)} kg</span>`,
+                  renderStatusBadge(formatZoneStatus(zone.status), zoneTone(zone)),
+                ]),
+              })}
+            `,
+          })}
+
+          ${renderPanel({
+            title: "Selected Zone Conditions",
+            dotColor: "var(--aero-blue)",
+            rightSlot: renderStatusBadge(selectedZone.zoneId, zoneTone(selectedZone)),
+            children: `
+              <div class="zone-conditions-grid">
+                ${buildZoneConditionRows(selectedZone)
+                  .map(
+                    (item) => `
+                      <div class="zone-conditions-card">
+                        <span class="zone-conditions-card__label">${item.label}</span>
+                        <span class="zone-conditions-card__value mono">${item.value}</span>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `,
+          })}
+        </div>
       </div>
     </section>
   `;
@@ -913,160 +931,84 @@ function renderAgent(
 ): string {
   return `
     <section class="agent-tab">
-      <div class="agent-companion-layout">
-        ${renderPanel({
-          title: "AETHER Companion",
-          dotColor: "var(--aero-blue)",
-          rightSlot:
-            '<button class="btn btn-ghost" type="button" data-planner-refresh="true">Refresh analysis</button>',
-          children: agent
-            ? `
-                <div class="agent-companion">
-                  <div class="agent-companion__intro">
-                    <p class="agent-companion__eyebrow mono">Signal-linked advisor channel</p>
-                    <h4 class="agent-companion__title">Mission conversation surface</h4>
-                    <p class="agent-companion__body">
-                      AETHER is framing live mission signals into an operator-ready conversation thread.
-                    </p>
-                  </div>
+      <div class="agent-hub">
+        <div class="agent-hub__hero">
+          <p class="agent-hub__kicker mono">Mission intelligence uplink</p>
+          <h2 class="agent-hub__title">AETHER Companion</h2>
+          <p class="agent-hub__subtitle">Mission intelligence uplink for greenhouse operations</p>
+        </div>
 
-                  <div class="agent-companion__thread ui-chat-list">
-                    <article class="ui-chat ui-chat--system agent-companion__message">
-                      <p class="ui-chat__role">System Sync</p>
-                      <p class="ui-chat__text">
-                        SOL ${mission.missionDay} linked. ${
-                          mission.activeScenario
-                            ? `${escapeHtml(mission.activeScenario.title)} is active across ${escapeHtml(mission.activeScenario.affectedZoneIds.join(", ") || "all zones")}.`
-                            : "No injected scenario is active."
-                        }
-                      </p>
-                    </article>
-
-                    <article class="ui-chat ui-chat--user agent-companion__message">
-                      <p class="ui-chat__role">Operator Prompt</p>
-                      <p class="ui-chat__text">Summarize mission risk, preserve crew nutrition, and propose the next safe action set.</p>
-                    </article>
-
-                    <article class="ui-chat ui-chat--agent agent-companion__message">
-                      <p class="ui-chat__role">AETHER</p>
-                      <p class="ui-chat__text">${escapeHtml(agent.riskSummary)}</p>
-                    </article>
-
-                    <article class="ui-chat ui-chat--agent agent-companion__message">
-                      <p class="ui-chat__role">AETHER</p>
-                      <p class="ui-chat__text">${escapeHtml(agent.explanation)}</p>
-                    </article>
-
-                    <article class="ui-chat ui-chat--agent agent-companion__message">
-                      <p class="ui-chat__role">Action Signal</p>
-                      ${
-                        agent.recommendedActions.length > 0
-                          ? `
-                              <div class="agent-companion__action-list">
-                                ${agent.recommendedActions
-                                  .slice(0, 3)
-                                  .map(
-                                    (action) => `
-                                      <div class="agent-companion__action-item">
-                                        <div class="agent-companion__action-head">
-                                          <span class="agent-companion__action-title">${escapeHtml(formatPlannerActionType(action.type))}${action.targetZoneId ? ` - ${escapeHtml(action.targetZoneId)}` : ""}</span>
-                                          ${renderStatusBadge(action.urgency.replaceAll("_", " "), urgencyTone(action.urgency))}
-                                        </div>
-                                        <p class="ui-chat__text">${escapeHtml(action.description)}</p>
-                                      </div>
-                                    `,
-                                  )
-                                  .join("")}
-                              </div>
-                            `
-                          : '<p class="ui-chat__text">No immediate operator action set is being carried on this pass.</p>'
-                      }
-                    </article>
-                  </div>
-
-                  <div class="agent-companion__composer">
-                    <p class="agent-companion__composer-note">
-                      Conversational uplink is being prepared. Live companion signals are available now.
-                    </p>
-                    <div class="agent-companion__composer-row">
-                      <input
-                        class="agent-companion__input"
-                        type="text"
-                        value=""
-                        placeholder="AETHER companion chat will come online here..."
-                        disabled
-                      />
-                      <button class="btn btn-primary agent-companion__send" type="button" disabled>Transmit</button>
-                    </div>
-                  </div>
-                </div>
-              `
-            : renderNotice({
-                level: "warn",
-                title: "Companion offline",
-                children: "The mission snapshot is live, but the advisor did not return any signal bundle for this refresh.",
-              }),
-        })}
-
-        ${renderPanel({
-          title: "Signal Rail",
-          dotColor: "var(--cau)",
-          children: `
-            <div class="agent-signal-rail">
-              <div class="agent-signal-list">
-                <article class="agent-signal-card">
-                  <p class="agent-signal-card__label">Risk Signal</p>
-                  <p class="agent-signal-card__value">${agent ? formatRiskLevel(agent.riskLevel) : "Unavailable"}</p>
-                  <p class="agent-signal-card__meta">${agent ? "Companion risk posture" : "Awaiting advisor signal"}</p>
-                </article>
-
-                <article class="agent-signal-card">
-                  <p class="agent-signal-card__label">Planner Mode</p>
-                  <p class="agent-signal-card__value">${planner ? formatPlannerMode(planner.mode) : "Unavailable"}</p>
-                  <p class="agent-signal-card__meta">${planner?.nutritionRiskDetected ? "Nutrition watch active" : "Stable planning posture"}</p>
-                </article>
-
-                <article class="agent-signal-card">
-                  <p class="agent-signal-card__label">Action Set</p>
-                  <p class="agent-signal-card__value">${agent ? agent.recommendedActions.length : 0}</p>
-                  <p class="agent-signal-card__meta">Operator actions in queue</p>
-                </article>
-
-                <article class="agent-signal-card">
-                  <p class="agent-signal-card__label">Scenario Link</p>
-                  <p class="agent-signal-card__value">${mission.activeScenario ? formatScenarioSeverity(mission.activeScenario.severity) : "Nominal"}</p>
-                  <p class="agent-signal-card__meta">${mission.activeScenario ? escapeHtml(mission.activeScenario.title) : "No live injected scenario"}</p>
-                </article>
+        <div class="agent-workspace">
+          <div class="agent-uplink ${agent ? "" : "agent-uplink--offline"}">
+            <div class="agent-uplink__aurora"></div>
+            <div class="agent-uplink__header">
+              <div>
+                <p class="agent-uplink__label mono">AETHER uplink</p>
+                <p class="agent-uplink__meta">Live advisory thread for mission risk, nutrition continuity, and safe next actions</p>
               </div>
+              <button class="btn btn-ghost agent-uplink__refresh" type="button" data-planner-refresh="true">Refresh analysis</button>
+            </div>
 
-              <div class="agent-signal-block">
-                <p class="agent-signal-block__title">Critical Signals</p>
-                ${
-                  agent && agent.criticalNutrientDependencies.length > 0
-                    ? `
-                        <div class="ui-notice-stack">
-                          ${agent.criticalNutrientDependencies
-                            .slice(0, 4)
-                            .map((dependency, index) =>
-                              renderNotice({
-                                level: "info",
-                                title: `Signal ${index + 1}`,
-                                children: dependency,
-                              }),
-                            )
-                            .join("")}
-                        </div>
-                      `
-                    : renderNotice({
-                        level: "info",
-                        title: "Signal map",
-                        children: "No additional dependency signals are being carried on this pass.",
-                      })
-                }
+            ${
+              agent
+                ? `
+                    <div class="agent-uplink__thread agent-uplink__thread--empty">
+                      <div class="agent-uplink__thread-empty">
+                        <p class="agent-uplink__thread-empty-title">No conversation yet</p>
+                        <p class="agent-uplink__thread-empty-body">Start a mission query to open the AETHER thread.</p>
+                      </div>
+                    </div>
+                  `
+                : `
+                    <div class="agent-uplink__empty">
+                      <p class="agent-uplink__empty-title">Companion offline</p>
+                      <p class="agent-uplink__empty-body">The mission snapshot is live, but the advisor did not return any signal bundle for this refresh.</p>
+                    </div>
+                  `
+            }
+
+            <div class="agent-uplink__composer">
+              <div class="agent-uplink__input-shell">
+                <div class="agent-uplink__input-tools">
+                  <span class="agent-uplink__tool mono">sol ${mission.missionDay}</span>
+                  <span class="agent-uplink__tool mono">${planner?.nutritionRiskDetected ? "nutrition watch" : "nutrition stable"}</span>
+                  <span class="agent-uplink__tool mono">${mission.activeScenario ? formatScenarioSeverity(mission.activeScenario.severity) : "nominal"}</span>
+                </div>
+                <div class="agent-uplink__input-row">
+                  <input
+                    class="agent-uplink__input"
+                    type="text"
+                    value=""
+                    placeholder="Ask AETHER about mission risk, nutrition continuity, or safe next actions..."
+                    disabled
+                  />
+                  <button class="agent-uplink__send" type="button" disabled>
+                    <span class="agent-uplink__send-label">Transmit</span>
+                  </button>
+                </div>
               </div>
             </div>
-          `,
-        })}
+          </div>
+
+          <aside class="agent-log-shell">
+            <div class="agent-log-shell__header">
+              <p class="agent-log-shell__label mono">Companion Log</p>
+              <p class="agent-log-shell__meta">Key commands and extracted mission notes from the chat</p>
+            </div>
+            <div class="agent-log-shell__body">
+              <div class="agent-uplink__command-list">
+                <article class="agent-uplink__command agent-uplink__command--idle">
+                  <div class="agent-uplink__command-head">
+                    <span class="agent-uplink__command-index mono">LOG 00</span>
+                    ${renderStatusBadge("empty", "NOM")}
+                  </div>
+                  <p class="agent-uplink__command-line mono">await_chat_input</p>
+                  <p class="agent-uplink__command-body">AETHER will record command recommendations and key mission notes here after the conversation begins.</p>
+                </article>
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
     </section>
   `;
@@ -1475,6 +1417,19 @@ function buildZoneGauges(zone: BackendCropZone, mission: BackendMissionState) {
       label: "Projected output",
       valueMuted: formatZoneStatus(zone.status),
     },
+  ];
+}
+
+function buildZoneConditionRows(zone: BackendCropZone): Array<{ label: string; value: string }> {
+  return [
+    { label: "Temperature", value: `${zone.sensors.temperature} C` },
+    { label: "Humidity", value: `${zone.sensors.humidity}%` },
+    { label: "CO2 ppm", value: `${zone.sensors.co2Ppm}` },
+    { label: "Light PAR", value: `${zone.sensors.lightPAR}` },
+    { label: "Photoperiod", value: `${zone.sensors.photoperiodHours} h` },
+    { label: "Nutrient pH", value: `${zone.sensors.nutrientPH}` },
+    { label: "Conductivity", value: `${zone.sensors.electricalConductivity} mS` },
+    { label: "Soil Moisture", value: `${zone.sensors.soilMoisture}%` },
   ];
 }
 
@@ -2444,18 +2399,6 @@ function severityTone(severity: BackendScenarioSeverity): StatusTone {
   return "NOM";
 }
 
-function urgencyTone(urgency: BackendAgentAnalysis["recommendedActions"][number]["urgency"]): StatusTone {
-  if (urgency === "immediate") {
-    return "ABT";
-  }
-
-  if (urgency === "within_24h") {
-    return "CAU";
-  }
-
-  return "NOM";
-}
-
 function toneFromPercent(value: number, nominalAt: number, cautionAt: number): StatusTone {
   if (value >= nominalAt) {
     return "NOM";
@@ -2590,10 +2533,6 @@ function formatPlannerMode(mode: BackendPlannerOutput["mode"] | undefined): stri
     .split("_")
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-function formatPlannerActionType(type: BackendAgentAnalysis["recommendedActions"][number]["type"]): string {
-  return type.replaceAll("_", " ");
 }
 
 function formatRiskLevel(riskLevel: BackendAgentAnalysis["riskLevel"]): string {
