@@ -60,6 +60,7 @@ export const scenarioTypeValues = [
   "water_recycling_decline",
   "energy_budget_reduction",
   "temperature_control_failure",
+  "single_zone_control_failure",
 ] as const;
 
 export const scenarioSeverityValues = ["mild", "moderate", "critical"] as const;

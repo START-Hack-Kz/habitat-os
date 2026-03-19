@@ -226,6 +226,10 @@ function buildExplanation(input: {
     return "The deterministic planner found no need to enter Nutrition Preservation Mode. The greenhouse remains within acceptable nutrition continuity thresholds.";
   }
 
+  if (state.activeScenario?.scenarioType === "single_zone_control_failure") {
+    return `${state.activeScenario.affectedZones[0] ?? "The failed bay"} has lost local control support. The planner isolates that zone, then redistributes shared water and lighting capacity toward the remaining calorie and protein crops. ${autoApply ? "Those redistribution actions were auto-applied." : "Those redistribution actions are ready for operator approval."} ${execution.explanation}`;
+  }
+
   return `${state.activeScenario ? `${state.activeScenario.scenarioType} is the active trigger.` : "The greenhouse is under abnormal stress."} The planner protects potatoes first for calories and beans second for protein, then accepts controlled cuts to lower-priority crops. ${autoApply ? "Those actions were auto-applied to the mission state." : "Those actions are prepared for operator approval."} ${execution.explanation}`;
 }
 

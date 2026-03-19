@@ -23,6 +23,7 @@ import type {
   StressSeverity,
   StressType,
   ZoneSensors,
+  CropZoneStatus,
 } from "../mission/mission.types";
 
 type CropImpactRule = {
@@ -40,6 +41,10 @@ type ScenarioSeverityRule = {
   lightParFactor?: number;
   photoperiodDelta?: number;
   temperatureDelta?: number;
+  statusOverride?: CropZoneStatus;
+  collateralSoilMoistureDelta?: number;
+  collateralLightParDelta?: number;
+  collateralPhotoperiodDelta?: number;
 };
 
 const WATER_RULES: Record<FailureScenarioSeverity, ScenarioSeverityRule> = {
@@ -163,6 +168,68 @@ const TEMPERATURE_RULES: Record<FailureScenarioSeverity, ScenarioSeverityRule> =
   },
 };
 
+const SINGLE_ZONE_CONTROL_RULES: Record<FailureScenarioSeverity, ScenarioSeverityRule> = {
+  mild: {
+    cropImpacts: {
+      lettuce: { stressSeverity: "moderate", stressType: "energy_shortage", yieldFactor: 0.7 },
+      radish: { stressSeverity: "moderate", stressType: "energy_shortage", yieldFactor: 0.72 },
+      potato: { stressSeverity: "moderate", stressType: "energy_shortage", yieldFactor: 0.7 },
+      beans: { stressSeverity: "moderate", stressType: "energy_shortage", yieldFactor: 0.72 },
+    },
+    eventType: "warning",
+    eventMessage:
+      "Zone control fault detected. Local irrigation and lighting are unstable. Prepare to redistribute shared support.",
+    soilMoistureFactor: 0.78,
+    humidityDelta: -6,
+    lightParFactor: 0.62,
+    photoperiodDelta: -3,
+    temperatureDelta: 1.5,
+    collateralSoilMoistureDelta: -4,
+    collateralLightParDelta: -12,
+    collateralPhotoperiodDelta: -0.3,
+  },
+  moderate: {
+    cropImpacts: {
+      lettuce: { stressSeverity: "high", stressType: "energy_shortage", yieldFactor: 0.42 },
+      radish: { stressSeverity: "high", stressType: "energy_shortage", yieldFactor: 0.44 },
+      potato: { stressSeverity: "high", stressType: "energy_shortage", yieldFactor: 0.4 },
+      beans: { stressSeverity: "high", stressType: "energy_shortage", yieldFactor: 0.44 },
+    },
+    eventType: "critical",
+    eventMessage:
+      "Single-zone control failure confirmed. Isolate the affected bay and redistribute water and energy to the remaining zones.",
+    soilMoistureFactor: 0.52,
+    humidityDelta: -10,
+    lightParFactor: 0.28,
+    photoperiodDelta: -7,
+    temperatureDelta: 3,
+    statusOverride: "critical",
+    collateralSoilMoistureDelta: -8,
+    collateralLightParDelta: -24,
+    collateralPhotoperiodDelta: -0.6,
+  },
+  critical: {
+    cropImpacts: {
+      lettuce: { stressSeverity: "critical", stressType: "energy_shortage", yieldFactor: 0 },
+      radish: { stressSeverity: "critical", stressType: "energy_shortage", yieldFactor: 0 },
+      potato: { stressSeverity: "critical", stressType: "energy_shortage", yieldFactor: 0 },
+      beans: { stressSeverity: "critical", stressType: "energy_shortage", yieldFactor: 0 },
+    },
+    eventType: "critical",
+    eventMessage:
+      "CRITICAL: Single-zone control failure. Isolate the affected bay and immediately redirect water and energy to the surviving zones.",
+    soilMoistureFactor: 0.3,
+    humidityDelta: -14,
+    lightParFactor: 0.06,
+    photoperiodDelta: -12,
+    temperatureDelta: 4.5,
+    statusOverride: "offline",
+    collateralSoilMoistureDelta: -12,
+    collateralLightParDelta: -42,
+    collateralPhotoperiodDelta: -1,
+  },
+};
+
 const SCENARIO_RULES: Record<
   FailureScenarioType,
   Record<FailureScenarioSeverity, ScenarioSeverityRule>
@@ -170,6 +237,7 @@ const SCENARIO_RULES: Record<
   water_recycling_decline: WATER_RULES,
   energy_budget_reduction: ENERGY_RULES,
   temperature_control_failure: TEMPERATURE_RULES,
+  single_zone_control_failure: SINGLE_ZONE_CONTROL_RULES,
 };
 
 const RESOURCE_OVERRIDE_KEYS = [
@@ -322,6 +390,28 @@ function applyScenarioSensorShift(input: {
     };
   }
 
+  if (scenarioType === "single_zone_control_failure") {
+    return {
+      ...sensors,
+      soilMoisture: roundToSingleDecimal(
+        clamp(sensors.soilMoisture * (severityRule.soilMoistureFactor ?? 1), 0, 100),
+      ),
+      humidity: roundToSingleDecimal(
+        clamp(sensors.humidity + (severityRule.humidityDelta ?? 0), 10, 100),
+      ),
+      lightPAR: roundToSingleDecimal(
+        clamp(sensors.lightPAR * (severityRule.lightParFactor ?? 1), 0, 1200),
+      ),
+      photoperiodHours: roundToSingleDecimal(
+        clamp(sensors.photoperiodHours + (severityRule.photoperiodDelta ?? 0), 0, 24),
+      ),
+      temperature: roundToSingleDecimal(
+        clamp(sensors.temperature + (severityRule.temperatureDelta ?? 0), -10, 45),
+      ),
+      co2Ppm: Math.round(clamp(sensors.co2Ppm - 140, 200, 5000)),
+    };
+  }
+
   return {
     ...sensors,
     humidity: roundToSingleDecimal(
@@ -357,16 +447,21 @@ function appendScenarioEvent(input: {
   timestamp: string;
   eventType: EventLevel;
   message: string;
+  scenarioType: FailureScenarioType;
   affectedZones: string[];
 }): void {
   const zoneId = input.affectedZones.length === 1 ? input.affectedZones[0] : undefined;
+  const message =
+    input.scenarioType === "single_zone_control_failure" && zoneId
+      ? `${zoneId}: ${input.message}`
+      : input.message;
 
   input.state.eventLog.push({
     eventId: `evt-${String(input.state.eventLog.length + 1).padStart(3, "0")}`,
     timestamp: input.timestamp,
     missionDay: input.state.missionDay,
     type: input.eventType,
-    message: input.message,
+    message,
     zoneId,
   });
 }
@@ -385,6 +480,37 @@ function applyScenarioEffects(input: {
 
   state.zones = state.zones.map((zone) => {
     if (!affectedZones.has(zone.zoneId)) {
+      if (scenarioType === "single_zone_control_failure") {
+        return {
+          ...zone,
+          sensors: {
+            ...zone.sensors,
+            soilMoisture: roundToSingleDecimal(
+              clamp(
+                zone.sensors.soilMoisture + (severityRule.collateralSoilMoistureDelta ?? 0),
+                0,
+                100,
+              ),
+            ),
+            lightPAR: roundToSingleDecimal(
+              clamp(
+                zone.sensors.lightPAR + (severityRule.collateralLightParDelta ?? 0),
+                0,
+                1200,
+              ),
+            ),
+            photoperiodHours: roundToSingleDecimal(
+              clamp(
+                zone.sensors.photoperiodHours +
+                  (severityRule.collateralPhotoperiodDelta ?? 0),
+                0,
+                24,
+              ),
+            ),
+          },
+        };
+      }
+
       return zone;
     }
 
@@ -403,7 +529,7 @@ function applyScenarioEffects(input: {
       projectedYieldKg: roundToSingleDecimal(
         Math.max(0, zone.projectedYieldKg * cropRule.yieldFactor),
       ),
-      status: deriveZoneStatus(cropRule.stressSeverity),
+      status: severityRule.statusOverride ?? deriveZoneStatus(cropRule.stressSeverity),
       stress: {
         active: cropRule.stressSeverity !== "none",
         type: cropRule.stressType,
@@ -460,6 +586,7 @@ export function applyScenarioInjection(
     timestamp,
     eventType: severityRule.eventType,
     message: severityRule.eventMessage,
+    scenarioType,
     affectedZones: [...affectedZones],
   });
   state.lastUpdated = timestamp;

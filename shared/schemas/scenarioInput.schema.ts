@@ -1,7 +1,11 @@
 // ScenarioInput — payload sent by the frontend to inject a failure scenario.
 // Also used for manual parameter tweaks.
 
-export type ScenarioType = "water_recycling_decline" | "energy_budget_reduction" | "temperature_control_failure";
+export type ScenarioType =
+  | "water_recycling_decline"
+  | "energy_budget_reduction"
+  | "temperature_control_failure"
+  | "single_zone_control_failure";
 export type ScenarioSeverity = "mild" | "moderate" | "critical";
 
 // ─── Scenario injection request ───────────────────────────────────────────────
@@ -10,7 +14,8 @@ export interface ScenarioInjectRequest {
   scenarioType: ScenarioType;
   severity: ScenarioSeverity;
 
-  // Optional: override which zones are affected (defaults to all zones if omitted)
+  // Optional: override which zones are affected (defaults to all zones if omitted).
+  // single_zone_control_failure requires exactly one zone id.
   affectedZones?: string[];
 
   // Optional: manual parameter overrides (advanced tweak mode)

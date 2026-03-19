@@ -172,4 +172,37 @@ export const SCENARIO_CATALOG: Record<FailureScenarioType, ScenarioDefinition> =
       },
     },
   },
+
+  single_zone_control_failure: {
+    scenarioType: "single_zone_control_failure",
+    label: "Single-Zone Control Failure",
+    description:
+      "A single crop bay loses local control support. Irrigation valves, lighting control, and " +
+      "environmental regulation in the affected zone are degraded or unavailable, forcing the " +
+      "system to isolate that bay and redistribute shared water and energy to the remaining zones.",
+    affectedResources: ["zone_control", "water", "energy", "lighting"],
+    nutritionRisk:
+      "Variable — losing one bay can erase a critical crop role. Potato loss hits calories hardest, " +
+      "beans hit protein continuity, and lettuce failure weakens micronutrient coverage.",
+    severityEffects: {
+      mild: {
+        label: "Mild",
+        parameterOverrides: {},
+        effectSummary:
+          "Local zone control fault detected. The affected bay shows weak irrigation and lighting response, but manual recovery remains possible.",
+      },
+      moderate: {
+        label: "Moderate",
+        parameterOverrides: {},
+        effectSummary:
+          "Single-zone control failure confirmed. The affected bay is unstable and should be isolated while water and energy are reallocated to the remaining bays.",
+      },
+      critical: {
+        label: "Critical",
+        parameterOverrides: {},
+        effectSummary:
+          "CRITICAL: Single-zone control failure. The affected bay is effectively lost until repair. Immediate redistribution of water and energy is required.",
+      },
+    },
+  },
 };
