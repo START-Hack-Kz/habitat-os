@@ -3,6 +3,7 @@ import type {
   BackendAgentAnalysis,
   BackendAgentChatResponse,
   BackendMissionState,
+  BackendPlantDecisionResponse,
   BackendPlannerOutput,
   BackendScenarioCatalogItem,
   BackendScenarioInjectRequest,
@@ -29,6 +30,15 @@ type AgentAnalysisFocus = "mission_overview" | "nutrition_risk" | "scenario_resp
 type AgentAnalysisRequest = {
   focus?: AgentAnalysisFocus;
   autoApply?: boolean;
+};
+
+type PlantDecisionApplyRequest = {
+  plantId: string;
+  targetStatus: "watch" | "critical";
+  severityLabel: "healthy" | "watch" | "sick" | "critical" | "dead";
+  recoverabilityLabel: "recoverable" | "unrecoverable";
+  recommendedAction: "monitor" | "treat" | "replace";
+  summary: string;
 };
 
 type SimulationTweakRequest = {
@@ -297,6 +307,28 @@ function mapMissionState(mission: MissionState): BackendMissionState {
         symptoms: zone.stress.symptoms,
       },
     })),
+    plants: mission.plants.map((plant) => ({
+      plantId: plant.plantId,
+      zoneId: plant.zoneId,
+      rowNo: plant.rowNo,
+      plantNo: plant.plantNo,
+      cropType: plant.cropType,
+      plantedAt: plant.plantedAt,
+      currentStatus: plant.currentStatus,
+    })),
+    plantHealthChecks: mission.plantHealthChecks.map((check) => ({
+      checkId: check.checkId,
+      plantId: check.plantId,
+      capturedAt: check.capturedAt,
+      imageUri: check.imageUri,
+      colorStressScore: check.colorStressScore,
+      wiltingScore: check.wiltingScore,
+      lesionScore: check.lesionScore,
+      growthDeclineScore: check.growthDeclineScore,
+      severityLabel: check.severityLabel,
+      recoverabilityLabel: check.recoverabilityLabel,
+      recommendedAction: check.recommendedAction,
+    })),
     resources: {
       waterReservoirL: mission.resources.waterReservoirL,
       waterRecyclingEfficiencyPercent: mission.resources.waterRecyclingEfficiency,
@@ -506,6 +538,22 @@ export function fetchAgentChat(question: string): Promise<BackendAgentChatRespon
     method: "POST",
     body: JSON.stringify({ question }),
   });
+}
+
+export function fetchPlantDecisionAnalysis(plantId: string): Promise<BackendPlantDecisionResponse> {
+  return requestJsonFromBase<BackendPlantDecisionResponse>(AI_BASE, "/ai/plants/analyze", {
+    method: "POST",
+    body: JSON.stringify({ plantId }),
+  });
+}
+
+export function applyPlantDecision(
+  payload: PlantDecisionApplyRequest,
+): Promise<BackendMissionState> {
+  return requestJson<MissionState>("/api/plants/decision/apply", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }).then(mapMissionState);
 }
 
 export async function injectScenario(

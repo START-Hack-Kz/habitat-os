@@ -12,7 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-from models import AIDecision, AnalyzeRequest, ChatRequest, ChatResponse
+from models import (
+    AIDecision,
+    AnalyzeRequest,
+    ChatRequest,
+    ChatResponse,
+    PlantAnalyzeRequest,
+    PlantDecisionResponse,
+)
 import agent as ai_agent
 
 
@@ -79,5 +86,18 @@ def chat(request: ChatRequest):
     """
     try:
         return ai_agent.chat(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ai/plants/analyze", response_model=PlantDecisionResponse)
+def analyze_plant(request: PlantAnalyzeRequest):
+    """
+    Run the dedicated plant-health decision workflow.
+    Reads the latest plant health check, decides whether the plant should stay in
+    production or be removed, and returns a persistence-ready decision payload.
+    """
+    try:
+        return ai_agent.analyze_plant_health(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

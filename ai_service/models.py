@@ -23,6 +23,10 @@ StressType = Literal["none", "heat", "cold", "water_deficit", "nitrogen_deficien
 StressSeverity = Literal["none", "low", "moderate", "high", "critical"]
 NutritionTrend = Literal["improving", "stable", "declining"]
 ConfidenceLabel = Literal["high", "medium", "low"]
+PlantStatus = Literal["healthy", "watch", "sick", "critical", "dead", "replaced"]
+PlantSeverityLabel = Literal["healthy", "watch", "sick", "critical", "dead"]
+PlantRecoverabilityLabel = Literal["recoverable", "unrecoverable"]
+PlantRecommendedAction = Literal["monitor", "treat", "replace"]
 
 
 # ── AIDecision sub-models ─────────────────────────────────────────────────────
@@ -109,6 +113,30 @@ class CropZone(BaseModel):
     allocationPercent: float
 
 
+class PlantRecord(BaseModel):
+    plantId: str
+    zoneId: str
+    rowNo: int
+    plantNo: int
+    cropType: str
+    plantedAt: str
+    currentStatus: PlantStatus
+
+
+class PlantHealthCheck(BaseModel):
+    checkId: str
+    plantId: str
+    capturedAt: str
+    imageUri: str
+    colorStressScore: float
+    wiltingScore: float
+    lesionScore: float
+    growthDeclineScore: float
+    severityLabel: PlantSeverityLabel
+    recoverabilityLabel: PlantRecoverabilityLabel
+    recommendedAction: PlantRecommendedAction
+
+
 class ResourceState(BaseModel):
     waterReservoirL: float
     waterRecyclingEfficiency: float
@@ -175,6 +203,8 @@ class MissionState(BaseModel):
     crewSize: int
     status: MissionStatus
     zones: list[CropZone]
+    plants: list[PlantRecord]
+    plantHealthChecks: list[PlantHealthCheck]
     resources: ResourceState
     nutrition: NutritionStatus
     activeScenario: Optional[FailureScenario]
@@ -223,6 +253,23 @@ class AnalyzeRequest(BaseModel):
     """Request body for POST /ai/analyze"""
     focus: Optional[Literal["mission_overview", "nutrition_risk", "scenario_response"]] = "mission_overview"
     autoApply: bool = False
+
+
+class PlantAnalyzeRequest(BaseModel):
+    plantId: str = Field(..., min_length=1, max_length=128)
+
+
+class PlantDecisionResponse(BaseModel):
+    decisionId: str
+    plantId: str
+    zoneId: str
+    severityLabel: PlantSeverityLabel
+    recoverabilityLabel: PlantRecoverabilityLabel
+    recommendedAction: PlantRecommendedAction
+    decision: Literal["keep", "replace"]
+    targetStatus: Literal["watch", "critical"]
+    summary: str
+    logMessage: str
 
 
 class ChatRequest(BaseModel):

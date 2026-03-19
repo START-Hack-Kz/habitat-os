@@ -372,6 +372,21 @@ export type BackendMissionStatus =
   | "nutrition_preservation_mode";
 
 export type BackendCropType = "lettuce" | "potato" | "beans" | "radish";
+export type BackendPlantStatus =
+  | "healthy"
+  | "watch"
+  | "sick"
+  | "critical"
+  | "dead"
+  | "replaced";
+export type BackendPlantSeverityLabel =
+  | "healthy"
+  | "watch"
+  | "sick"
+  | "critical"
+  | "dead";
+export type BackendPlantRecoverabilityLabel = "recoverable" | "unrecoverable";
+export type BackendPlantRecommendedAction = "monitor" | "treat" | "replace";
 export type BackendZoneStatus =
   | "healthy"
   | "stressed"
@@ -458,6 +473,30 @@ export interface BackendCropZone {
   stress: BackendZoneStress;
 }
 
+export interface BackendPlantRecord {
+  plantId: string;
+  zoneId: string;
+  rowNo: number;
+  plantNo: number;
+  cropType: BackendCropType;
+  plantedAt: string;
+  currentStatus: BackendPlantStatus;
+}
+
+export interface BackendPlantHealthCheck {
+  checkId: string;
+  plantId: string;
+  capturedAt: string;
+  imageUri: string;
+  colorStressScore: number;
+  wiltingScore: number;
+  lesionScore: number;
+  growthDeclineScore: number;
+  severityLabel: BackendPlantSeverityLabel;
+  recoverabilityLabel: BackendPlantRecoverabilityLabel;
+  recommendedAction: BackendPlantRecommendedAction;
+}
+
 export interface BackendResourceState {
   waterReservoirL: number;
   waterRecyclingEfficiencyPercent: number;
@@ -530,6 +569,8 @@ export interface BackendMissionState {
   crewSize: number;
   status: BackendMissionStatus;
   zones: BackendCropZone[];
+  plants: BackendPlantRecord[];
+  plantHealthChecks: BackendPlantHealthCheck[];
   resources: BackendResourceState;
   nutrition: BackendNutritionStatus;
   activeScenario: BackendFailureScenario | null;
@@ -640,6 +681,19 @@ export interface BackendAgentChatResponse {
   suggestedActions: string[];
   followUpQuestions: string[];
   confidence: BackendAgentChatConfidence;
+}
+
+export interface BackendPlantDecisionResponse {
+  decisionId: string;
+  plantId: string;
+  zoneId: string;
+  severityLabel: BackendPlantSeverityLabel;
+  recoverabilityLabel: BackendPlantRecoverabilityLabel;
+  recommendedAction: BackendPlantRecommendedAction;
+  decision: "keep" | "replace";
+  targetStatus: "watch" | "critical";
+  summary: string;
+  logMessage: string;
 }
 
 export interface BackendScenarioInjectRequest {

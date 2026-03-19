@@ -4,6 +4,10 @@
 export type MissionStatus = "nominal" | "warning" | "critical" | "nutrition_preservation_mode";
 export type CropType = "lettuce" | "potato" | "beans" | "radish";
 export type ZoneStatus = "healthy" | "stressed" | "critical" | "harvesting" | "replanting" | "offline";
+export type PlantStatus = "healthy" | "watch" | "sick" | "critical" | "dead" | "replaced";
+export type PlantSeverityLabel = "healthy" | "watch" | "sick" | "critical" | "dead";
+export type PlantRecoverabilityLabel = "recoverable" | "unrecoverable";
+export type PlantRecommendedAction = "monitor" | "treat" | "replace";
 export type StressType = "none" | "heat" | "cold" | "water_deficit" | "nitrogen_deficiency" | "light_deficit" | "energy_shortage" | "salinity";
 export type StressSeverity = "none" | "low" | "moderate" | "high" | "critical";
 export type ScenarioType =
@@ -52,6 +56,32 @@ export interface CropZone {
   stress: StressState;
   projectedYieldKg: number;     // estimated yield at harvest given current conditions
   allocationPercent: number;    // % of shared resources allocated to this zone (0–100)
+}
+
+// ─── Individual plants ──────────────────────────────────────────────────────
+
+export interface PlantRecord {
+  plantId: string;
+  zoneId: string;
+  rowNo: number;
+  plantNo: number;
+  cropType: CropType;
+  plantedAt: string;            // ISO date-time
+  currentStatus: PlantStatus;
+}
+
+export interface PlantHealthCheck {
+  checkId: string;
+  plantId: string;
+  capturedAt: string;           // ISO date-time
+  imageUri: string;
+  colorStressScore: number;
+  wiltingScore: number;
+  lesionScore: number;
+  growthDeclineScore: number;
+  severityLabel: PlantSeverityLabel;
+  recoverabilityLabel: PlantRecoverabilityLabel;
+  recommendedAction: PlantRecommendedAction;
 }
 
 // ─── Resource state ──────────────────────────────────────────────────────────
@@ -137,6 +167,8 @@ export interface MissionState {
   crewSize: number;                     // 4
   status: MissionStatus;
   zones: CropZone[];
+  plants: PlantRecord[];
+  plantHealthChecks: PlantHealthCheck[];
   resources: ResourceState;
   nutrition: NutritionStatus;
   activeScenario: FailureScenario | null;

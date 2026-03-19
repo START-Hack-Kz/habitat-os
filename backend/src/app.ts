@@ -4,6 +4,7 @@ import { agentRoutes } from "./routes/agent";
 import { healthRoutes } from "./routes/health";
 import { missionRoutes } from "./routes/mission";
 import { plannerRoutes } from "./routes/planner";
+import { plantRoutes } from "./routes/plants";
 import { scenariosRoutes } from "./routes/scenarios";
 import { simulationRoutes } from "./routes/simulation";
 
@@ -76,6 +77,7 @@ export function buildApp() {
   void app.register(agentRoutes);
   void app.register(healthRoutes);
   void app.register(missionRoutes);
+  void app.register(plantRoutes);
   void app.register(scenariosRoutes);
   void app.register(simulationRoutes);
   void app.register(plannerRoutes);

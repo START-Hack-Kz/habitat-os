@@ -2,10 +2,12 @@ import { renderHeader } from "./components/header";
 import { mountGreenhouseLanding, renderGreenhouseLanding } from "./components/greenhouseLanding";
 import { renderNavigation } from "./components/navigation";
 import {
+  applyPlantDecision,
   applySimulationTweak,
   fetchAgentAnalysis,
   fetchAgentChat,
   fetchMissionState,
+  fetchPlantDecisionAnalysis,
   fetchPlannerAnalysis,
   fetchScenarioCatalog,
   injectScenario,
@@ -23,6 +25,9 @@ import type {
   BackendCropZone,
   BackendEventLogEntry,
   BackendMissionState,
+  BackendPlantDecisionResponse,
+  BackendPlantHealthCheck,
+  BackendPlantRecord,
   BackendPlannerOutput,
   BackendScenarioCatalogItem,
   BackendScenarioSeverity,
@@ -95,6 +100,11 @@ interface SensorResetPlan {
       soilMoisture?: number;
     }>;
   };
+}
+
+interface PlantWorkflowTarget {
+  plant: BackendPlantRecord;
+  healthCheck: BackendPlantHealthCheck;
 }
 
 interface MetricTileData {
@@ -193,8 +203,12 @@ export function renderApp(root: HTMLDivElement): void {
   let pollTimer: number | null = null;
   let pollInFlight = false;
   let decisionSupportInFlight = false;
+  let plantDecisionInFlight = false;
+  let plantDecisionTimer: number | null = null;
+  let scheduledPlantDecisionKey = "";
   let lastAgentAnalysisKey = "";
   let lastHandledAutoAnalysisKey = "";
+  let lastHandledPlantDecisionKey = "";
   let lastMissionWatchKey = "";
 
   const draw = () => {
@@ -371,6 +385,7 @@ export function renderApp(root: HTMLDivElement): void {
 
   window.addEventListener("beforeunload", () => {
     stopMissionPolling();
+    stopPlantDecisionTimer();
   });
 
   void bootstrap();
@@ -395,6 +410,7 @@ export function renderApp(root: HTMLDivElement): void {
       state.mission = missionResult.value;
       state.scenarios = scenariosResult.status === "fulfilled" ? scenariosResult.value : [];
       syncSelections(state);
+      lastHandledPlantDecisionKey = "";
       lastMissionWatchKey = buildMissionWatchKey(state.mission);
       const handledSensorReset = await handleSensorResetIfNeeded();
       if (!handledSensorReset) {
@@ -406,6 +422,7 @@ export function renderApp(root: HTMLDivElement): void {
         });
         lastHandledAutoAnalysisKey = buildAutoAnalysisKey(state.mission, state.planner);
       }
+      schedulePlantWorkflowIfNeeded();
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
@@ -496,6 +513,7 @@ export function renderApp(root: HTMLDivElement): void {
         showBusyStrip: false,
         recordAutoLog: true,
       });
+      schedulePlantWorkflowIfNeeded();
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
@@ -515,6 +533,7 @@ export function renderApp(root: HTMLDivElement): void {
       state.mission = await resetSimulation();
       state.sensorNotification = null;
       syncSelections(state);
+      lastHandledPlantDecisionKey = "";
       lastMissionWatchKey = buildMissionWatchKey(state.mission);
       await syncDecisionSupport({
         allowAutoAnalyze: true,
@@ -522,6 +541,7 @@ export function renderApp(root: HTMLDivElement): void {
         showBusyStrip: false,
         recordAutoLog: false,
       });
+      schedulePlantWorkflowIfNeeded();
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
@@ -551,6 +571,14 @@ export function renderApp(root: HTMLDivElement): void {
     pollTimer = null;
   }
 
+  function stopPlantDecisionTimer(): void {
+    if (plantDecisionTimer !== null) {
+      window.clearTimeout(plantDecisionTimer);
+      plantDecisionTimer = null;
+    }
+    scheduledPlantDecisionKey = "";
+  }
+
   async function syncMissionStateFromPoll(): Promise<void> {
     if (pollInFlight || decisionSupportInFlight || state.busy) {
       return;
@@ -578,6 +606,7 @@ export function renderApp(root: HTMLDivElement): void {
           recordAutoLog: true,
         });
       }
+      schedulePlantWorkflowIfNeeded();
     } catch (error) {
       if (!state.mission) {
         state.error = getErrorMessage(error);
@@ -585,6 +614,94 @@ export function renderApp(root: HTMLDivElement): void {
       }
     } finally {
       pollInFlight = false;
+    }
+  }
+
+  function schedulePlantWorkflowIfNeeded(): void {
+    if (!state.mission || plantDecisionInFlight) {
+      return;
+    }
+
+    const target = findPendingPlantWorkflowTarget(state.mission);
+    if (!target) {
+      stopPlantDecisionTimer();
+      lastHandledPlantDecisionKey = "";
+      return;
+    }
+
+    const nextKey = buildPlantWorkflowKey(target);
+    if (nextKey === lastHandledPlantDecisionKey || nextKey === scheduledPlantDecisionKey) {
+      return;
+    }
+
+    stopPlantDecisionTimer();
+    scheduledPlantDecisionKey = nextKey;
+    plantDecisionTimer = window.setTimeout(() => {
+      plantDecisionTimer = null;
+      scheduledPlantDecisionKey = "";
+      void runPlantWorkflow(target, nextKey);
+    }, 2200);
+  }
+
+  async function runPlantWorkflow(
+    target: PlantWorkflowTarget,
+    workflowKey: string,
+  ): Promise<void> {
+    if (plantDecisionInFlight) {
+      return;
+    }
+
+    plantDecisionInFlight = true;
+    state.companionLog = mergeCompanionLog(state.companionLog, [
+      {
+        id: `plant-scan-${Date.now()}`,
+        kind: "cmd",
+        line: `canopy_dog_scan_${normalizeCommandLabel(target.plant.zoneId)}_r${target.plant.rowNo}_p${target.plant.plantNo}`,
+        body: `Canopy rover reached ${target.plant.zoneId} row ${target.plant.rowNo} plant ${target.plant.plantNo} and started a health triage scan.`,
+        tone: "CAU",
+      },
+    ]);
+    draw();
+
+    try {
+      const decision = await fetchPlantDecisionAnalysis(target.plant.plantId);
+      const nextMission = await applyPlantDecision({
+        plantId: decision.plantId,
+        targetStatus: decision.targetStatus,
+        severityLabel: decision.severityLabel,
+        recoverabilityLabel: decision.recoverabilityLabel,
+        recommendedAction: decision.recommendedAction,
+        summary: decision.logMessage,
+      });
+
+      state.mission = nextMission;
+      syncSelections(state);
+      lastHandledPlantDecisionKey = workflowKey;
+      lastMissionWatchKey = buildMissionWatchKey(nextMission);
+      state.companionMessages = [
+        ...state.companionMessages,
+        buildPlantWorkflowMessage(decision, target),
+      ];
+      state.companionLog = mergeCompanionLog(
+        state.companionLog,
+        buildPlantWorkflowLogItems(decision, target),
+      );
+      state.error = "";
+      draw();
+      schedulePlantWorkflowIfNeeded();
+    } catch (error) {
+      state.companionLog = mergeCompanionLog(state.companionLog, [
+        {
+          id: `plant-scan-fail-${Date.now()}`,
+          kind: "fact",
+          line: `plant_triage_fault_${normalizeCommandLabel(target.plant.zoneId)}`,
+          body: `Plant triage failed for ${target.plant.zoneId} row ${target.plant.rowNo} plant ${target.plant.plantNo}: ${getErrorMessage(error)}`,
+          tone: "ABT",
+        },
+      ]);
+      draw();
+    } finally {
+      plantDecisionInFlight = false;
     }
   }
 
@@ -889,6 +1006,12 @@ function renderOverview(
     buildHabitatOperationsModel(
       greenhouse,
       mission.zones.find((zone) => zone.zoneId === greenhouse.zoneId),
+      mission.plants.filter((plant) => plant.zoneId === greenhouse.zoneId),
+      mission.plantHealthChecks.filter((check) =>
+        mission.plants.some(
+          (plant) => plant.plantId === check.plantId && plant.zoneId === greenhouse.zoneId,
+        ),
+      ),
     ),
   );
   const selectedHabitat =
@@ -1011,6 +1134,12 @@ function renderHabitatOperationsWindow(
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
     .join(" ");
   const dogPathId = `habitat-dog-route-${selectedHabitat.habitatId}`;
+  const robotAnchor = selectedHabitat.robotHoldingPosition
+    ? {
+        x: selectedHabitat.robotFocusX,
+        y: selectedHabitat.robotFocusY,
+      }
+    : selectedHabitat.dogPath[0] ?? { x: 25, y: 92 };
 
   return `
     <div class="habitat-window ${collapsed ? "is-collapsed" : ""}">
@@ -1054,6 +1183,7 @@ function renderHabitatOperationsWindow(
           <div class="habitat-window__header-status">
             ${renderStatusBadge(selectedHabitat.statusLabel, selectedHabitat.statusTone)}
             ${renderStatusBadge(`${selectedHabitat.growthProgressPercent}% growth`, selectedHabitat.statusTone)}
+            ${renderStatusBadge(selectedHabitat.robotStatusLabel, selectedHabitat.robotPaused ? "ABT" : "NOM")}
           </div>
         </div>
 
@@ -1072,9 +1202,27 @@ function renderHabitatOperationsWindow(
             ${selectedHabitat.plants.map((plant) => renderHabitatPlantBox(plant)).join("")}
           </div>
 
+          ${
+            selectedHabitat.robotHoldingPosition
+              ? `
+                  <div class="habitat-window__robot-alert">
+                    <p class="habitat-window__robot-alert-title">${
+                      selectedHabitat.robotPaused
+                        ? "Manual harvest / replacement hold"
+                        : "Plant health inspection"
+                    }</p>
+                    <p class="habitat-window__robot-alert-body">${escapeHtml(selectedHabitat.robotStatusDetail)}</p>
+                  </div>
+                `
+              : ""
+          }
+
           <svg class="habitat-window__dog-path" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <path id="${dogPathId}" class="habitat-window__dog-route" d="${dogPath}" pathLength="100"></path>
-            <g class="habitat-window__dog-runner">
+            <g
+              class="habitat-window__dog-runner ${selectedHabitat.robotHoldingPosition ? "is-paused" : ""}"
+              ${selectedHabitat.robotHoldingPosition ? `transform="translate(${robotAnchor.x} ${robotAnchor.y})"` : ""}
+            >
               <line class="habitat-window__dog-tail-glow" x1="-2.1" y1="0" x2="-0.78" y2="0"></line>
               <line class="habitat-window__dog-tail" x1="-1.55" y1="0" x2="-0.7" y2="0"></line>
               <g class="habitat-window__dog-icon">
@@ -1089,9 +1237,15 @@ function renderHabitatOperationsWindow(
                 <circle class="habitat-window__dog-eye" cx="1.05" cy="-0.08" r="0.05"></circle>
                 <circle class="habitat-window__dog-eye" cx="1.05" cy="0.08" r="0.05"></circle>
               </g>
-              <animateMotion dur="28s" repeatCount="indefinite" rotate="auto">
-                <mpath href="#${dogPathId}" />
-              </animateMotion>
+              ${
+                selectedHabitat.robotHoldingPosition
+                  ? ""
+                  : `
+                      <animateMotion dur="18s" repeatCount="indefinite" rotate="auto">
+                        <mpath href="#${dogPathId}" />
+                      </animateMotion>
+                    `
+              }
             </g>
           </svg>
         </div>
@@ -1109,6 +1263,10 @@ function renderHabitatOperationsWindow(
             <span class="habitat-window__footer-label mono">Allocation</span>
             <span class="habitat-window__footer-value mono">${selectedHabitat.allocationPercent}%</span>
           </div>
+          <div class="habitat-window__footer-metric">
+            <span class="habitat-window__footer-label mono">Flagged plants</span>
+            <span class="habitat-window__footer-value mono">${selectedHabitat.manualInterventionCount}/${selectedHabitat.plantCount}</span>
+          </div>
           <div class="habitat-window__footer-note">${escapeHtml(selectedHabitat.summary)}</div>
         </div>
       </div>
@@ -1122,13 +1280,16 @@ function renderHabitatPlantBox(plant: HabitatOperationsModel["plants"][number]):
     <div
       class="habitat-plant habitat-plant--${plant.tone.toLowerCase()}"
       style="left:${plant.x}%; top:${plant.y}%"
-      title="${escapeHtml(plant.label)} · growth ${plant.growthPercent}% · water ${plant.waterPercent}%"
+      title="${escapeHtml(
+        `${plant.label} · row ${plant.rowNo} · plant ${plant.plantNo} · ${formatPlantStatus(plant.status)} · ${plant.recommendedAction} · ${plant.recoverabilityLabel} · color ${Math.round(plant.scores.colorStressScore * 100)}% · wilting ${Math.round(plant.scores.wiltingScore * 100)}%`,
+      )}"
     >
       <span class="habitat-plant__head">
         <span class="habitat-plant__code mono">${escapeHtml(plant.code)}</span>
         <span class="habitat-plant__icon" aria-hidden="true">${renderPlantIcon(plant.cropType)}</span>
       </span>
       <span class="habitat-plant__label">${escapeHtml(plant.label)}</span>
+      <span class="habitat-plant__status mono">${escapeHtml(formatPlantStatus(plant.status))}</span>
     </div>
   `;
 }
@@ -1859,6 +2020,45 @@ function getLatestNonAiEvent(mission: BackendMissionState): BackendEventLogEntry
   return mission.eventLog.find((entry) => entry.type !== "ai_action");
 }
 
+function isPlantWorkflowEvent(entry: BackendEventLogEntry): boolean {
+  return (
+    entry.message.startsWith("Canopy rover triage") ||
+    entry.message.startsWith("Robot patrol paused") ||
+    entry.message.startsWith("Robot patrol resumed")
+  );
+}
+
+function getLatestMissionIncidentEvent(
+  mission: BackendMissionState,
+): BackendEventLogEntry | undefined {
+  return mission.eventLog.find(
+    (entry) => entry.type !== "ai_action" && !isPlantWorkflowEvent(entry),
+  );
+}
+
+function countPlantStatusesForZone(mission: BackendMissionState, zoneId: string): Record<
+  "watch" | "sick" | "critical" | "dead" | "replaced",
+  number
+> {
+  return mission.plants
+    .filter((plant) => plant.zoneId === zoneId)
+    .reduce(
+      (counts, plant) => {
+        if (plant.currentStatus !== "healthy") {
+          counts[plant.currentStatus] += 1;
+        }
+        return counts;
+      },
+      {
+        watch: 0,
+        sick: 0,
+        critical: 0,
+        dead: 0,
+        replaced: 0,
+      },
+    );
+}
+
 function hasMissionIncident(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null = null,
@@ -1887,6 +2087,12 @@ function buildMissionWatchKey(mission: BackendMissionState): string {
         `${zone.zoneId}:t${Math.round(zone.sensors.temperature * 10) / 10}:h${Math.round(zone.sensors.humidity)}:sm${Math.round(zone.sensors.soilMoisture)}:ph${Math.round(zone.sensors.nutrientPH * 10) / 10}`,
     )
     .join("|");
+  const plantKey = mission.zones
+    .map((zone) => {
+      const counts = countPlantStatusesForZone(mission, zone.zoneId);
+      return `${zone.zoneId}:w${counts.watch}:s${counts.sick}:c${counts.critical}:d${counts.dead}:r${counts.replaced}`;
+    })
+    .join("|");
   const resourceKey = [
     `water:${Math.round(mission.resources.waterDaysRemaining)}`,
     `energy:${Math.round(mission.resources.energyDaysRemaining)}`,
@@ -1901,6 +2107,7 @@ function buildMissionWatchKey(mission: BackendMissionState): string {
     latestNonAiEvent?.eventId ?? "no-event",
     zoneStateKey,
     sensorKey,
+    plantKey,
     resourceKey,
   ].join("::");
 }
@@ -1909,13 +2116,13 @@ function buildAgentAnalysisKey(
   mission: BackendMissionState,
   focus: AgentAnalysisFocus,
 ): string {
-  const latestNonAiEvent = getLatestNonAiEvent(mission);
+  const latestMissionEvent = getLatestMissionIncidentEvent(mission);
 
   return [
     focus,
     mission.status,
     mission.activeScenario?.scenarioId ?? "no-scenario",
-    latestNonAiEvent?.eventId ?? mission.lastUpdated,
+    latestMissionEvent?.eventId ?? mission.lastUpdated,
   ].join("::");
 }
 
@@ -1925,7 +2132,7 @@ function buildAutoAnalysisKey(
   focus?: AgentAnalysisFocus,
 ): string {
   const analysisFocus = focus ?? deriveAgentAnalysisFocus(mission, planner);
-  const latestNonAiEvent = getLatestNonAiEvent(mission);
+  const latestMissionEvent = getLatestMissionIncidentEvent(mission);
   const hasIncident = hasMissionIncident(mission, planner);
 
   if (!hasIncident) {
@@ -1935,7 +2142,7 @@ function buildAutoAnalysisKey(
   return [
     analysisFocus,
     mission.activeScenario?.scenarioId ?? "no-scenario",
-    latestNonAiEvent?.eventId ?? mission.lastUpdated,
+    latestMissionEvent?.eventId ?? mission.lastUpdated,
   ].join("::");
 }
 
@@ -1991,6 +2198,73 @@ function buildAutoAnalysisMessage(
     text: `${agent.riskSummary} ${agent.explanation}${actionSummary ? ` Recommended actions: ${actionSummary}.` : ""}`,
     meta: `auto incident brief · ${focus.replaceAll("_", " ")}`,
   };
+}
+
+function findPendingPlantWorkflowTarget(
+  mission: BackendMissionState,
+): PlantWorkflowTarget | null {
+  const diseasedPlants = mission.plants
+    .filter((plant) => plant.zoneId === "zone-A" && plant.currentStatus === "sick")
+    .sort((left, right) => {
+      if (left.rowNo !== right.rowNo) {
+        return left.rowNo - right.rowNo;
+      }
+
+      return left.plantNo - right.plantNo;
+    });
+
+  for (const plant of diseasedPlants) {
+    const latestCheck = mission.plantHealthChecks
+      .filter((check) => check.plantId === plant.plantId)
+      .sort((left, right) => right.capturedAt.localeCompare(left.capturedAt))[0];
+
+    if (latestCheck) {
+      return {
+        plant,
+        healthCheck: latestCheck,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildPlantWorkflowKey(target: PlantWorkflowTarget): string {
+  return [
+    target.plant.plantId,
+    target.plant.currentStatus,
+    target.healthCheck.checkId,
+    target.healthCheck.severityLabel,
+    target.healthCheck.recommendedAction,
+  ].join("::");
+}
+
+function buildPlantWorkflowMessage(
+  decision: BackendPlantDecisionResponse,
+  target: PlantWorkflowTarget,
+): CompanionMessage {
+  return {
+    id: `plant-triage-${Date.now()}`,
+    role: "agent",
+    text: decision.summary,
+    meta: `plant triage · ${target.plant.zoneId} row ${target.plant.rowNo} plant ${target.plant.plantNo} · ${decision.decision}`,
+  };
+}
+
+function buildPlantWorkflowLogItems(
+  decision: BackendPlantDecisionResponse,
+  target: PlantWorkflowTarget,
+): CompanionLogItem[] {
+  const tone = decision.decision === "replace" ? "ABT" : "CAU";
+  return [
+    {
+      id: `plant-triage-result-${Date.now()}`,
+      kind: "fact",
+      line: `plant_triage_${decision.decision}_${normalizeCommandLabel(target.plant.zoneId)}_r${target.plant.rowNo}_p${target.plant.plantNo}`,
+      body: decision.logMessage,
+      tone,
+    },
+  ];
 }
 
 function buildAgentAnalysisLabel(
@@ -2284,6 +2558,8 @@ function deriveAgentSuggestedMission(
   const overlayMission: BackendMissionState = {
     ...mission,
     zones,
+    plants: mission.plants.map((plant) => ({ ...plant })),
+    plantHealthChecks: mission.plantHealthChecks.map((check) => ({ ...check })),
     resources: {
       ...mission.resources,
     },
@@ -3748,6 +4024,12 @@ function formatCropType(type: BackendCropZone["cropType"]): string {
 }
 
 function formatZoneStatus(status: BackendCropZone["status"]): string {
+  return status.replaceAll("_", " ");
+}
+
+function formatPlantStatus(
+  status: BackendMissionState["plants"][number]["currentStatus"],
+): string {
   return status.replaceAll("_", " ");
 }
 

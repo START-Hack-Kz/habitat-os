@@ -1366,6 +1366,8 @@ function createInteriorGarden(silhouette: GreenhouseSummary["silhouette"]): THRE
   return group;
 }
 
+void createRaisedFrame;
+
 function buildGreenhouseHoverSnapshots(
   greenhouses: GreenhouseSummary[],
   mission: BackendMissionState | null,

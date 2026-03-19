@@ -9,6 +9,12 @@ import type {
   MicronutrientStatus as SharedMicronutrientStatus,
   NutritionStatus as SharedNutritionStatus,
   NutritionTrend as SharedNutritionTrend,
+  PlantHealthCheck as SharedPlantHealthCheck,
+  PlantRecommendedAction as SharedPlantRecommendedAction,
+  PlantRecoverabilityLabel as SharedPlantRecoverabilityLabel,
+  PlantRecord as SharedPlantRecord,
+  PlantSeverityLabel as SharedPlantSeverityLabel,
+  PlantStatus as SharedPlantStatus,
   ResourceState as SharedResourceState,
   ScenarioSeverity as SharedScenarioSeverity,
   ScenarioType as SharedScenarioType,
@@ -27,6 +33,23 @@ export const missionStatusValues = [
 ] as const;
 
 export const cropTypeValues = ["lettuce", "potato", "beans", "radish"] as const;
+export const plantStatusValues = [
+  "healthy",
+  "watch",
+  "sick",
+  "critical",
+  "dead",
+  "replaced",
+] as const;
+export const plantSeverityLabelValues = [
+  "healthy",
+  "watch",
+  "sick",
+  "critical",
+  "dead",
+] as const;
+export const plantRecoverabilityLabelValues = ["recoverable", "unrecoverable"] as const;
+export const plantRecommendedActionValues = ["monitor", "treat", "replace"] as const;
 
 export const cropZoneStatusValues = [
   "healthy",
@@ -79,6 +102,10 @@ export const nutritionTrendValues = ["improving", "stable", "declining"] as cons
 
 export type MissionStatus = SharedMissionStatus;
 export type CropType = SharedCropType;
+export type PlantStatus = SharedPlantStatus;
+export type PlantSeverityLabel = SharedPlantSeverityLabel;
+export type PlantRecoverabilityLabel = SharedPlantRecoverabilityLabel;
+export type PlantRecommendedAction = SharedPlantRecommendedAction;
 export type CropZoneStatus = SharedZoneStatus;
 export type StressType = SharedStressType;
 export type StressSeverity = SharedStressSeverity;
@@ -89,6 +116,8 @@ export type NutritionTrend = SharedNutritionTrend;
 export type ZoneSensors = SharedZoneSensors;
 export type ZoneStress = SharedStressState;
 export type CropZone = SharedCropZone;
+export type PlantRecord = SharedPlantRecord;
+export type PlantHealthCheck = SharedPlantHealthCheck;
 export type ResourceState = SharedResourceState;
 export type MicronutrientStatus = SharedMicronutrientStatus;
 export type NutritionStatus = SharedNutritionStatus;

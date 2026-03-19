@@ -3,6 +3,7 @@ import type { AgentAnalyzeRequest } from "../../schemas/agent.schema";
 import { buildMissionSnapshot, getCurrentMissionSnapshot } from "../mission/mission.service";
 import { getMissionState, setMissionState } from "../mission/mission.store";
 import type { MissionState } from "../mission/mission.types";
+import { buildPlantInterventionEvents } from "../plants/plant.service";
 import { createNutritionPreservationExecution } from "../planner/planner.service";
 import type { PlannerExecution } from "../planner/planner.types";
 import type {
@@ -243,7 +244,15 @@ function appendAiActionEvent(state: MissionState, timestamp: string, message: st
     message,
   });
   nextState.lastUpdated = timestamp;
-  return buildMissionSnapshot(nextState);
+  const snapshot = buildMissionSnapshot(nextState);
+  snapshot.eventLog.push(
+    ...buildPlantInterventionEvents({
+      beforeState: state,
+      afterState: snapshot,
+      timestamp,
+    }),
+  );
+  return buildMissionSnapshot(snapshot);
 }
 
 export function createAgentAnalysis(

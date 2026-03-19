@@ -1,5 +1,6 @@
 import { calculateNutrition } from "../modules/nutrition/nutrition.calculator";
 import type { CropType, MissionState, ZoneSensors, ZoneStress } from "../modules/mission/mission.types";
+import { buildSeedPlantHealthChecks, buildSeedPlants } from "../modules/plants/plant.service";
 
 function roundToSingleDecimal(value: number): number {
   return Math.round(value * 10) / 10;
@@ -153,6 +154,8 @@ const BASE_MISSION_SEED = {
       allocationPercent: 7,
     },
   ],
+  plants: [] as MissionState["plants"],
+  plantHealthChecks: [] as MissionState["plantHealthChecks"],
   resources: {
     waterReservoirL: 5800,
     waterRecyclingEfficiency: 91,
@@ -193,6 +196,15 @@ const BASE_MISSION_SEED = {
   ],
   lastUpdated: "2026-03-19T10:00:00.000Z",
 } satisfies Omit<MissionState, "nutrition">;
+
+BASE_MISSION_SEED.plants = buildSeedPlants(
+  BASE_MISSION_SEED.zones,
+  BASE_MISSION_SEED.lastUpdated,
+);
+BASE_MISSION_SEED.plantHealthChecks = buildSeedPlantHealthChecks(
+  BASE_MISSION_SEED.plants,
+  BASE_MISSION_SEED.lastUpdated,
+);
 
 export const MISSION_SEED: MissionState = {
   ...BASE_MISSION_SEED,

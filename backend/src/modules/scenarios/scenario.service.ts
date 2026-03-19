@@ -13,6 +13,7 @@ import {
   detectNutritionRisk,
 } from "../mission/mission.monitoring";
 import { setMissionState } from "../mission/mission.store";
+import { buildPlantInterventionEvents } from "../plants/plant.service";
 import type {
   CropType,
   EventLevel,
@@ -547,8 +548,16 @@ export function applyScenarioInjection(
     affectedZones: [...affectedZones],
   });
   state.lastUpdated = timestamp;
+  const nextState = buildMissionSnapshot(state);
+  nextState.eventLog.push(
+    ...buildPlantInterventionEvents({
+      beforeState: beforeSnapshot,
+      afterState: nextState,
+      timestamp,
+    }),
+  );
 
-  return buildMissionSnapshot(state);
+  return buildMissionSnapshot(nextState);
 }
 
 export function createScenarioInjectionOutput(

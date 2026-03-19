@@ -17,7 +17,8 @@ from strands.tools.mcp.mcp_client import MCPClient
 from models import (
     AIDecision, AnalyzeRequest, BeforeAfterComparison, BeforeAfterDelta,
     ChatRequest, ChatResponse, MissionState, NutritionSnapshot,
-    PlannerOutput, RecommendedAction,
+    PlannerOutput, PlantAnalyzeRequest, PlantDecisionResponse,
+    PlantHealthCheck, PlantRecord, RecommendedAction,
 )
 from tools import (
     getMissionState, getRecentMissionLog, runPlannerAnalysis,
@@ -552,6 +553,142 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
         # Fallback: deterministic analysis from tool outputs
         print(f"[agent] LLM unavailable ({type(e).__name__}: {e}), using deterministic fallback")
         return fallback_decision
+
+
+# ── Plant Triage ──────────────────────────────────────────────────────────────
+
+def _get_plant_health_check(
+    mission: MissionState,
+    plant_id: str,
+) -> tuple[PlantRecord, PlantHealthCheck]:
+    plant = next((candidate for candidate in mission.plants if candidate.plantId == plant_id), None)
+    if plant is None:
+        raise ValueError(f"Plant {plant_id} was not found in mission state.")
+
+    checks = [check for check in mission.plantHealthChecks if check.plantId == plant_id]
+    if not checks:
+        raise ValueError(f"Plant {plant_id} does not have a health check.")
+
+    latest_check = max(checks, key=lambda item: item.capturedAt)
+    return plant, latest_check
+
+
+def _build_plant_triage_summary(
+    *,
+    plant: PlantRecord,
+    check: PlantHealthCheck,
+    decision: str,
+) -> tuple[str, str]:
+    score_bits = [
+        f"color stress {round(check.colorStressScore * 100)}%",
+        f"wilting {round(check.wiltingScore * 100)}%",
+        f"leaf lesions {round(check.lesionScore * 100)}%",
+        f"growth decline {round(check.growthDeclineScore * 100)}%",
+    ]
+    plant_label = f"{plant.zoneId} row {plant.rowNo} plant {plant.plantNo}"
+
+    removal_reasons: list[str] = []
+    keep_reasons: list[str] = []
+
+    if check.lesionScore >= 0.55:
+        removal_reasons.append("leaf lesions are too extensive to recover safely")
+    if check.wiltingScore >= 0.78:
+        removal_reasons.append("wilting is severe enough that the canopy is unlikely to rebound")
+    if check.growthDeclineScore >= 0.72:
+        removal_reasons.append("growth has collapsed far below the expected production curve")
+    if check.recoverabilityLabel == "unrecoverable":
+        removal_reasons.append("the latest health check marked the plant as unrecoverable")
+
+    if check.lesionScore < 0.35:
+        keep_reasons.append("tissue damage is still limited")
+    if check.wiltingScore < 0.72:
+        keep_reasons.append("the canopy can still recover its structure")
+    if check.growthDeclineScore < 0.62:
+        keep_reasons.append("growth loss has not become irreversible")
+    if check.recoverabilityLabel == "recoverable":
+        keep_reasons.append("the latest health check still considers the plant recoverable")
+
+    if decision == "replace":
+        reason_text = "; ".join(removal_reasons[:3]) or "the plant is no longer recoverable"
+        summary = (
+            f"{plant_label} should be removed from production because {reason_text}. "
+            f"Keeping it would waste limited grow space in zone-A."
+        )
+        log_message = (
+            f"Canopy rover triage marked {plant_label} for human harvest and replacement because "
+            f"{reason_text}. Measured signals: {', '.join(score_bits)}."
+        )
+        return summary, log_message
+
+    reason_text = "; ".join(keep_reasons[:3]) or "the stress profile still looks recoverable"
+    summary = (
+        f"{plant_label} should stay in production under watch because {reason_text}. "
+        f"The damage is not severe enough to justify removing the plant."
+    )
+    log_message = (
+        f"Canopy rover triage kept {plant_label} in production under watch because {reason_text}. "
+        f"Measured signals: {', '.join(score_bits)}."
+    )
+    return summary, log_message
+
+
+def _fallback_plant_decision(
+    mission: MissionState,
+    request: PlantAnalyzeRequest,
+) -> PlantDecisionResponse:
+    plant, check = _get_plant_health_check(mission, request.plantId)
+    composite_score = round(
+        (
+            check.colorStressScore * 0.2
+            + check.wiltingScore * 0.3
+            + check.lesionScore * 0.25
+            + check.growthDeclineScore * 0.25
+        ),
+        3,
+    )
+
+    replace = (
+        check.recoverabilityLabel == "unrecoverable"
+        or check.recommendedAction == "replace"
+        or check.severityLabel in {"critical", "dead"}
+        or check.lesionScore >= 0.55
+        or (check.wiltingScore >= 0.78 and check.growthDeclineScore >= 0.72)
+        or composite_score >= 0.72
+    )
+
+    decision = "replace" if replace else "keep"
+    severity_label = "critical" if replace else ("sick" if composite_score >= 0.42 else "watch")
+    recoverability_label = "unrecoverable" if replace else "recoverable"
+    recommended_action = "replace" if replace else ("treat" if severity_label == "sick" else "monitor")
+    target_status = "critical" if replace else "watch"
+    summary, log_message = _build_plant_triage_summary(
+        plant=plant,
+        check=check,
+        decision=decision,
+    )
+
+    return PlantDecisionResponse(
+        decisionId=f"plant-{plant.zoneId}-{plant.rowNo}-{plant.plantNo}-{int(datetime.now(timezone.utc).timestamp())}",
+        plantId=plant.plantId,
+        zoneId=plant.zoneId,
+        severityLabel=severity_label,
+        recoverabilityLabel=recoverability_label,
+        recommendedAction=recommended_action,
+        decision=decision,
+        targetStatus=target_status,
+        summary=summary,
+        logMessage=log_message,
+    )
+
+
+def analyze_plant_health(request: PlantAnalyzeRequest) -> PlantDecisionResponse:
+    """
+    Dedicated per-plant triage workflow.
+    This intentionally stays separate from the zone/scenario incident flow.
+    """
+    raw_mission = json.loads(getMissionState._tool_func())
+    mission = MissionState.model_validate(raw_mission)
+    return _fallback_plant_decision(mission, request)
 
 
 # ── Chat ──────────────────────────────────────────────────────────────────────

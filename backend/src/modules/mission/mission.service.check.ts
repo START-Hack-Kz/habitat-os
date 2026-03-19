@@ -20,6 +20,8 @@ const REQUIRED_KEYS: Array<keyof MissionState> = [
   "crewSize",
   "status",
   "zones",
+  "plants",
+  "plantHealthChecks",
   "resources",
   "nutrition",
   "activeScenario",
@@ -98,6 +100,11 @@ function main(): void {
   assert(
     JSON.stringify(baseline.nutrition) === JSON.stringify(expectedBaselineNutrition),
     "Mission snapshot nutrition was not refreshed from the calculator",
+  );
+  assert(baseline.plants.length === 80, `Expected 80 plants in baseline snapshot, received ${baseline.plants.length}`);
+  assert(
+    baseline.plantHealthChecks.length === baseline.plants.length,
+    `Expected one plant health check per plant, received ${baseline.plantHealthChecks.length} for ${baseline.plants.length} plants`,
   );
   expectStatus(baseline, "nominal");
 

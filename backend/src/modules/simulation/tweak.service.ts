@@ -1,6 +1,7 @@
 import { buildMissionSnapshot, getCurrentMissionSnapshot } from "../mission/mission.service";
 import { setMissionState } from "../mission/mission.store";
 import type { MissionState } from "../mission/mission.types";
+import { buildPlantInterventionEvents } from "../plants/plant.service";
 import type { SimulationTweakRequest } from "../../schemas/simulation.schema";
 
 function cloneMissionState(state: MissionState): MissionState {
@@ -35,7 +36,8 @@ export function applySimulationTweak(
   sourceState: MissionState,
   request: SimulationTweakRequest,
 ): MissionState {
-  const state = cloneMissionState(sourceState);
+  const beforeSnapshot = buildMissionSnapshot(sourceState);
+  const state = cloneMissionState(beforeSnapshot);
 
   if (request.zones) {
     state.zones = state.zones.map((zone) => {
@@ -96,6 +98,13 @@ export function applySimulationTweak(
     type: nextState.status === "critical" ? "critical" : hasAbnormality ? "warning" : "info",
     message: buildEventMessage(request),
   });
+  nextState.eventLog.push(
+    ...buildPlantInterventionEvents({
+      beforeState: beforeSnapshot,
+      afterState: nextState,
+      timestamp,
+    }),
+  );
 
   return buildMissionSnapshot(nextState);
 }

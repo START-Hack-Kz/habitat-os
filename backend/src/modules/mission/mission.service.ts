@@ -1,5 +1,6 @@
 import { CROP_PROFILES } from "../../data/cropProfiles.data";
 import { calculateNutrition } from "../nutrition/nutrition.calculator";
+import { reconcilePlantHealthChecks, reconcilePlants } from "../plants/plant.service";
 import { getMissionState } from "./mission.store";
 import type {
   CropType,
@@ -606,6 +607,16 @@ export function buildMissionSnapshot(sourceState: MissionState): MissionState {
   const state = cloneMissionState(sourceState);
   const resources = normalizeResources(state.resources);
   const zones = state.zones.map((zone) => normalizeZone(zone, resources));
+  const plants = reconcilePlants({
+    currentPlants: state.plants,
+    zones,
+    referenceTimestamp: state.lastUpdated,
+  });
+  const plantHealthChecks = reconcilePlantHealthChecks({
+    currentChecks: state.plantHealthChecks,
+    plants,
+    referenceTimestamp: state.lastUpdated,
+  });
   const nutrition = calculateNutrition({
     zones,
     resources,
@@ -626,6 +637,8 @@ export function buildMissionSnapshot(sourceState: MissionState): MissionState {
     ...state,
     missionDurationTotal: Math.max(1, state.missionDurationTotal),
     zones,
+    plants,
+    plantHealthChecks,
     resources,
     nutrition,
     eventLog,
