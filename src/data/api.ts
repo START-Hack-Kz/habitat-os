@@ -1,6 +1,7 @@
 import type {
   BackendAgentAction,
   BackendAgentAnalysis,
+  BackendAgentChatResponse,
   BackendMissionState,
   BackendPlannerOutput,
   BackendScenarioCatalogItem,
@@ -25,14 +26,15 @@ import type {
 } from "../../shared/schemas/scenarioInput.schema";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3001").replace(/\/$/, "");
+const AI_BASE = (import.meta.env.VITE_AI_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJsonFromBase<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   if (init?.body !== undefined && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     headers,
     ...init,
   });
@@ -43,6 +45,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJsonFromBase<T>(API_BASE, path, init);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -426,6 +432,13 @@ export async function fetchPlannerAnalysis(): Promise<BackendPlannerOutput> {
 export async function fetchAgentAnalysis(): Promise<BackendAgentAnalysis> {
   const decision = await fetchCanonicalAgentDecision();
   return mapAgentAnalysis(decision);
+}
+
+export function fetchAgentChat(question: string): Promise<BackendAgentChatResponse> {
+  return requestJsonFromBase<BackendAgentChatResponse>(AI_BASE, "/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
 }
 
 export async function injectScenario(

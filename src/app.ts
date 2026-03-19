@@ -1,23 +1,29 @@
 import { renderHeader } from "./components/header";
+import { mountGreenhouseLanding, renderGreenhouseLanding } from "./components/greenhouseLanding";
 import { renderNavigation } from "./components/navigation";
 import {
   fetchAgentAnalysis,
+  fetchAgentChat,
   fetchMissionState,
   fetchPlannerAnalysis,
   fetchScenarioCatalog,
   injectScenario,
   resetSimulation,
 } from "./data/api";
+import { getGreenhouseById, greenhouseCatalog } from "./data/greenhouses";
 import { getZoneCompositionProfile } from "./data/zoneComposition";
 import type {
   AlertLevel,
   BackendAgentAnalysis,
+  BackendAgentChatConfidence,
+  BackendAgentChatResponse,
   BackendCropZone,
   BackendEventLogEntry,
   BackendMissionState,
   BackendPlannerOutput,
   BackendScenarioCatalogItem,
   BackendScenarioSeverity,
+  GreenhouseSummary,
   HeaderModel,
   StatusTone,
   TabDefinition,
@@ -35,7 +41,11 @@ import {
   renderStatusBadge,
 } from "./ui/primitives";
 
+type AppView = "landing" | "detail";
+
 interface AppState {
+  view: AppView;
+  activeGreenhouseId: string;
   activeTab: TabId;
   selectedZoneId: string;
   selectedScenarioType: BackendScenarioCatalogItem["scenarioType"] | "";
@@ -43,6 +53,9 @@ interface AppState {
   scenarios: BackendScenarioCatalogItem[];
   planner: BackendPlannerOutput | null;
   agent: BackendAgentAnalysis | null;
+  companionMessages: CompanionMessage[];
+  companionLog: CompanionLogItem[];
+  companionBusy: boolean;
   booting: boolean;
   busy: boolean;
   syncMessage: string;
@@ -97,6 +110,21 @@ interface MicronutrientMiniData {
   tone: StatusTone;
 }
 
+interface CompanionMessage {
+  id: string;
+  role: "user" | "agent";
+  text: string;
+  meta?: string;
+}
+
+interface CompanionLogItem {
+  id: string;
+  kind: "cmd" | "fact" | "next";
+  line: string;
+  body: string;
+  tone: StatusTone;
+}
+
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "I. Overview" },
   { id: "crops", label: "II. Crops & Growth" },
@@ -107,7 +135,11 @@ const tabs: Array<{ id: TabId; label: string }> = [
 ];
 
 export function renderApp(root: HTMLDivElement): void {
+  const initialRoute = parseRoute(window.location.pathname);
+  let landingSceneController: { dispose: () => void } | null = null;
   const state: AppState = {
+    view: initialRoute.view,
+    activeGreenhouseId: initialRoute.greenhouseId,
     activeTab: "overview",
     selectedZoneId: "",
     selectedScenarioType: "",
@@ -115,6 +147,9 @@ export function renderApp(root: HTMLDivElement): void {
     scenarios: [],
     planner: null,
     agent: null,
+    companionMessages: [],
+    companionLog: [],
+    companionBusy: false,
     booting: true,
     busy: false,
     syncMessage: "Connecting to live mission state.",
@@ -122,7 +157,24 @@ export function renderApp(root: HTMLDivElement): void {
   };
 
   const draw = () => {
-    const headerModel = createHeaderModel(state.mission, state.planner, state.agent);
+    if (state.view === "landing") {
+      root.innerHTML = renderLandingShell(state);
+      landingSceneController?.dispose();
+      const landingRoot = root.querySelector<HTMLElement>(".landing-scene");
+      if (landingRoot) {
+        landingSceneController = mountGreenhouseLanding(landingRoot, {
+          greenhouses: greenhouseCatalog,
+          onSelect: navigateToGreenhouse,
+        });
+      }
+      return;
+    }
+
+    landingSceneController?.dispose();
+    landingSceneController = null;
+
+    const greenhouse = getActiveGreenhouse(state);
+    const headerModel = createHeaderModel(state.mission, state.planner, state.agent, greenhouse);
     const navTabs = createNavigationTabs(state.mission, state.agent);
 
     root.innerHTML = `
@@ -131,6 +183,7 @@ export function renderApp(root: HTMLDivElement): void {
         ${renderNavigation(navTabs, state.activeTab)}
 
         <div class="app-shell">
+          ${renderGreenhouseContextBar(greenhouse)}
           ${state.error ? renderErrorStrip(state.error) : ""}
           ${state.busy ? renderBusyStrip(state.syncMessage) : ""}
           ${
@@ -154,11 +207,28 @@ export function renderApp(root: HTMLDivElement): void {
       return;
     }
 
+    const greenhouseTrigger = target.closest<HTMLElement>("[data-greenhouse-open]");
     const tabButton = target.closest<HTMLElement>("[data-tab-target]");
+    const homeTrigger = target.closest<HTMLElement>("[data-route-home]");
     const zoneTrigger = target.closest<HTMLElement>("[data-zone-select]");
     const injectTrigger = target.closest<HTMLElement>("[data-scenario-inject]");
     const resetTrigger = target.closest<HTMLElement>("[data-scenario-reset]");
     const plannerRefresh = target.closest<HTMLElement>("[data-planner-refresh]");
+
+    if (greenhouseTrigger) {
+      const greenhouseId = greenhouseTrigger.dataset.greenhouseOpen ?? "";
+
+      if (getGreenhouseById(greenhouseId)) {
+        navigateToGreenhouse(greenhouseId);
+      }
+
+      return;
+    }
+
+    if (homeTrigger) {
+      navigateToLanding();
+      return;
+    }
 
     if (tabButton) {
       const nextTab = tabButton.dataset.tabTarget as TabId | undefined;
@@ -204,12 +274,37 @@ export function renderApp(root: HTMLDivElement): void {
     }
   });
 
+  root.addEventListener("submit", (event) => {
+    const target = event.target;
+
+    if (!(target instanceof HTMLFormElement) || !target.matches("[data-agent-form]")) {
+      return;
+    }
+
+    event.preventDefault();
+    const formData = new FormData(target);
+    const question = String(formData.get("question") ?? "").trim();
+
+    if (!question || state.companionBusy) {
+      return;
+    }
+
+    void sendCompanionMessage(question);
+  });
+
+  window.addEventListener("popstate", () => {
+    const route = parseRoute(window.location.pathname);
+    state.view = route.view;
+    state.activeGreenhouseId = route.greenhouseId;
+    draw();
+  });
+
   void bootstrap();
 
   async function bootstrap(): Promise<void> {
     state.booting = true;
     state.busy = true;
-    state.syncMessage = "Loading mission, scenario catalog, planner state, and decision support.";
+    state.syncMessage = "Loading mission, planner state, and decision support.";
     state.error = "";
     draw();
 
@@ -260,6 +355,55 @@ export function renderApp(root: HTMLDivElement): void {
     } finally {
       state.busy = false;
       state.syncMessage = "";
+      draw();
+    }
+  }
+
+  async function sendCompanionMessage(question: string): Promise<void> {
+    state.companionMessages = [
+      ...state.companionMessages,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        text: question,
+      },
+    ];
+    state.companionBusy = true;
+    draw();
+
+    try {
+      const response = await fetchAgentChat(question);
+      state.companionMessages = [
+        ...state.companionMessages,
+        {
+          id: `agent-${Date.now()}`,
+          role: "agent",
+          text: response.answer,
+          meta: buildCompanionMessageMeta(response),
+        },
+      ];
+      state.companionLog = mergeCompanionLog(state.companionLog, buildCompanionLogItems(response));
+    } catch (error) {
+      state.companionMessages = [
+        ...state.companionMessages,
+        {
+          id: `agent-error-${Date.now()}`,
+          role: "agent",
+          text: `AETHER uplink unavailable: ${getErrorMessage(error)}`,
+          meta: "uplink fault",
+        },
+      ];
+      state.companionLog = mergeCompanionLog(state.companionLog, [
+        {
+          id: `log-error-${Date.now()}`,
+          kind: "fact",
+          line: "uplink_fault",
+          body: "The chat request failed. Confirm the AI service is running on the configured uplink endpoint.",
+          tone: "ABT",
+        },
+      ]);
+    } finally {
+      state.companionBusy = false;
       draw();
     }
   }
@@ -329,6 +473,60 @@ export function renderApp(root: HTMLDivElement): void {
       draw();
     }
   }
+
+  function navigateToGreenhouse(greenhouseId: string): void {
+    state.view = "detail";
+    state.activeGreenhouseId = greenhouseId;
+    window.history.pushState({}, "", `/greenhouse/${encodeURIComponent(greenhouseId)}`);
+    draw();
+  }
+
+  function navigateToLanding(): void {
+    state.view = "landing";
+    window.history.pushState({}, "", "/");
+    draw();
+  }
+}
+
+function parseRoute(pathname: string): { view: AppView; greenhouseId: string } {
+  const match = pathname.match(/^\/greenhouse\/([^/]+)\/?$/i);
+  const fallbackGreenhouseId = greenhouseCatalog[0]?.id ?? "";
+
+  if (!match) {
+    return { view: "landing", greenhouseId: fallbackGreenhouseId };
+  }
+
+  const greenhouseId = decodeURIComponent(match[1]);
+  return {
+    view: getGreenhouseById(greenhouseId) ? "detail" : "landing",
+    greenhouseId: getGreenhouseById(greenhouseId)?.id ?? fallbackGreenhouseId,
+  };
+}
+
+function getActiveGreenhouse(state: AppState): GreenhouseSummary {
+  return getGreenhouseById(state.activeGreenhouseId) ?? greenhouseCatalog[0];
+}
+
+function renderLandingShell(state: AppState): string {
+  return `
+    <div class="landing-frame">
+      ${renderGreenhouseLanding(greenhouseCatalog, state.mission?.missionDay ?? null)}
+    </div>
+  `;
+}
+
+function renderGreenhouseContextBar(greenhouse: GreenhouseSummary): string {
+  return `
+    <div class="greenhouse-context">
+      <button class="greenhouse-context__back" type="button" data-route-home="true">
+        Return to habitat array
+      </button>
+      <div class="greenhouse-context__identity">
+        <span class="greenhouse-context__code mono">${escapeHtml(greenhouse.code)}</span>
+        <span class="greenhouse-context__name">${escapeHtml(greenhouse.name)}</span>
+      </div>
+    </div>
+  `;
 }
 
 function renderPage(state: AppState): string {
@@ -338,7 +536,7 @@ function renderPage(state: AppState): string {
 
   switch (state.activeTab) {
     case "overview":
-      return renderOverview(state.mission, state.planner, state.selectedZoneId);
+      return renderOverview(state.mission, state.planner);
     case "crops":
       return renderCrops(state.mission, state.selectedZoneId);
     case "resources":
@@ -346,18 +544,24 @@ function renderPage(state: AppState): string {
     case "nutrition":
       return renderNutrition(state.mission, state.planner);
     case "risk":
-      return renderRisk(state.mission, state.scenarios, state.selectedScenarioType);
+      return renderRisk(state.mission);
     case "agent":
-      return renderAgent(state.mission, state.planner, state.agent);
+      return renderAgent(
+        state.mission,
+        state.planner,
+        state.agent,
+        state.companionMessages,
+        state.companionLog,
+        state.companionBusy,
+      );
     default:
-      return renderOverview(state.mission, state.planner, state.selectedZoneId);
+      return renderOverview(state.mission, state.planner);
   }
 }
 
 function renderOverview(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
-  selectedZoneId: string,
 ): string {
   const metrics = buildOverviewMetrics(mission);
 
@@ -401,7 +605,7 @@ function renderOverview(
               </div>
               <div class="overview-zone-grid">
                 ${mission.zones
-                  .map((zone) => renderZoneOperationsCard(zone, zone.zoneId === selectedZoneId))
+                  .map((zone) => renderZoneOperationsCard(zone, false, false))
                   .join("")}
               </div>
             </div>
@@ -850,16 +1054,7 @@ function renderNutrition(mission: BackendMissionState, planner: BackendPlannerOu
   `;
 }
 
-function renderRisk(
-  mission: BackendMissionState,
-  scenarios: BackendScenarioCatalogItem[],
-  selectedScenarioType: AppState["selectedScenarioType"],
-): string {
-  const selectedScenario =
-    scenarios.find((item) => item.scenarioType === selectedScenarioType) ??
-    scenarios.find((item) => item.scenarioType === mission.activeScenario?.type) ??
-    scenarios[0];
-
+function renderRisk(mission: BackendMissionState): string {
   return `
     ${renderRiskAlert(mission)}
 
@@ -903,23 +1098,6 @@ function renderRisk(
           `,
         })}
       </div>
-
-      ${renderPanel({
-        title: "Scenario Catalog",
-        dotColor: "var(--aero-blue)",
-        children:
-          scenarios.length > 0
-            ? `
-                <div class="backend-scenario-grid">
-                  ${scenarios.map((scenario) => renderScenarioCard(scenario, mission, selectedScenario?.scenarioType)).join("")}
-                </div>
-              `
-            : renderNotice({
-                level: "warn",
-                title: "Catalog unavailable",
-                children: "The mock simulator has been retired. Scenario control now depends entirely on the live scenario registry.",
-              }),
-      })}
     </section>
   `;
 }
@@ -928,6 +1106,9 @@ function renderAgent(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
   agent: BackendAgentAnalysis | null,
+  messages: CompanionMessage[],
+  log: CompanionLogItem[],
+  companionBusy: boolean,
 ): string {
   return `
     <section class="agent-tab">
@@ -950,8 +1131,45 @@ function renderAgent(
             </div>
 
             ${
-              agent
+              messages.length > 0
                 ? `
+                    <div class="agent-uplink__thread">
+                      ${messages
+                        .map(
+                          (message) => `
+                            <article class="agent-uplink__message agent-uplink__message--${message.role}">
+                              <div class="agent-uplink__avatar agent-uplink__avatar--${message.role}">
+                                ${message.role === "user" ? "YOU" : "AE"}
+                              </div>
+                              <div class="agent-uplink__bubble agent-uplink__bubble--${message.role}">
+                                <p class="agent-uplink__message-role mono">${message.role === "user" ? "Operator" : "AETHER"}</p>
+                                <p class="agent-uplink__message-text">${escapeHtml(message.text)}</p>
+                                ${
+                                  message.meta
+                                    ? `<p class="agent-uplink__message-meta mono">${escapeHtml(message.meta)}</p>`
+                                    : ""
+                                }
+                              </div>
+                            </article>
+                          `,
+                        )
+                        .join("")}
+                      ${
+                        companionBusy
+                          ? `
+                              <article class="agent-uplink__message agent-uplink__message--agent">
+                                <div class="agent-uplink__avatar agent-uplink__avatar--agent">AE</div>
+                                <div class="agent-uplink__bubble agent-uplink__bubble--agent">
+                                  <p class="agent-uplink__message-role mono">AETHER</p>
+                                  <p class="agent-uplink__message-text">Processing mission context and composing a grounded response.</p>
+                                </div>
+                              </article>
+                            `
+                          : ""
+                      }
+                    </div>
+                  `
+                : `
                     <div class="agent-uplink__thread agent-uplink__thread--empty">
                       <div class="agent-uplink__thread-empty">
                         <p class="agent-uplink__thread-empty-title">No conversation yet</p>
@@ -959,16 +1177,21 @@ function renderAgent(
                       </div>
                     </div>
                   `
-                : `
+            }
+
+            ${
+              !agent && messages.length === 0
+                ? `
                     <div class="agent-uplink__empty">
                       <p class="agent-uplink__empty-title">Companion offline</p>
                       <p class="agent-uplink__empty-body">The mission snapshot is live, but the advisor did not return any signal bundle for this refresh.</p>
                     </div>
                   `
+                : ""
             }
 
             <div class="agent-uplink__composer">
-              <div class="agent-uplink__input-shell">
+              <form class="agent-uplink__input-shell" data-agent-form>
                 <div class="agent-uplink__input-tools">
                   <span class="agent-uplink__tool mono">sol ${mission.missionDay}</span>
                   <span class="agent-uplink__tool mono">${planner?.nutritionRiskDetected ? "nutrition watch" : "nutrition stable"}</span>
@@ -978,15 +1201,15 @@ function renderAgent(
                   <input
                     class="agent-uplink__input"
                     type="text"
-                    value=""
+                    name="question"
                     placeholder="Ask AETHER about mission risk, nutrition continuity, or safe next actions..."
-                    disabled
+                    ${companionBusy ? "disabled" : ""}
                   />
-                  <button class="agent-uplink__send" type="button" disabled>
-                    <span class="agent-uplink__send-label">Transmit</span>
+                  <button class="agent-uplink__send" type="submit" ${companionBusy ? "disabled" : ""}>
+                    <span class="agent-uplink__send-label">${companionBusy ? "Thinking" : "Transmit"}</span>
                   </button>
                 </div>
-              </div>
+              </form>
             </div>
           </div>
 
@@ -997,14 +1220,33 @@ function renderAgent(
             </div>
             <div class="agent-log-shell__body">
               <div class="agent-uplink__command-list">
-                <article class="agent-uplink__command agent-uplink__command--idle">
-                  <div class="agent-uplink__command-head">
-                    <span class="agent-uplink__command-index mono">LOG 00</span>
-                    ${renderStatusBadge("empty", "NOM")}
-                  </div>
-                  <p class="agent-uplink__command-line mono">await_chat_input</p>
-                  <p class="agent-uplink__command-body">AETHER will record command recommendations and key mission notes here after the conversation begins.</p>
-                </article>
+                ${
+                  log.length > 0
+                    ? log
+                        .map(
+                          (item, index) => `
+                            <article class="agent-uplink__command">
+                              <div class="agent-uplink__command-head">
+                                <span class="agent-uplink__command-index mono">LOG ${String(index).padStart(2, "0")}</span>
+                                ${renderStatusBadge(item.kind, item.tone)}
+                              </div>
+                              <p class="agent-uplink__command-line mono">${escapeHtml(item.line)}</p>
+                              <p class="agent-uplink__command-body">${escapeHtml(item.body)}</p>
+                            </article>
+                          `,
+                        )
+                        .join("")
+                    : `
+                        <article class="agent-uplink__command agent-uplink__command--idle">
+                          <div class="agent-uplink__command-head">
+                            <span class="agent-uplink__command-index mono">LOG 00</span>
+                            ${renderStatusBadge("empty", "NOM")}
+                          </div>
+                          <p class="agent-uplink__command-line mono">await_chat_input</p>
+                          <p class="agent-uplink__command-body">AETHER will record command recommendations and key mission notes here after the conversation begins.</p>
+                        </article>
+                      `
+                }
               </div>
             </div>
           </aside>
@@ -1024,6 +1266,87 @@ function renderBootState(): string {
       children: "The dashboard is waiting for the mission state feed and related runtime services before rendering mission data.",
     }),
   });
+}
+
+function buildCompanionMessageMeta(response: BackendAgentChatResponse): string {
+  const parts: string[] = [response.confidence];
+  if (response.relevantSection) {
+    parts.push(response.relevantSection);
+  }
+  return parts.join(" · ");
+}
+
+function buildCompanionLogItems(response: BackendAgentChatResponse): CompanionLogItem[] {
+  const tone = toneFromChatConfidence(response.confidence);
+  const items: CompanionLogItem[] = [];
+
+  if (response.relevantSection) {
+    items.push({
+      id: `section-${Date.now()}`,
+      kind: "fact",
+      line: `section:${normalizeCommandLabel(response.relevantSection)}`,
+      body: `Response grounded in ${response.relevantSection}.`,
+      tone,
+    });
+  }
+
+  response.suggestedActions.slice(0, 3).forEach((action, index) => {
+    items.push({
+      id: `action-${Date.now()}-${index}`,
+      kind: "cmd",
+      line: normalizeCommandLabel(action),
+      body: action,
+      tone,
+    });
+  });
+
+  response.supportingFacts.slice(0, 3).forEach((fact, index) => {
+    items.push({
+      id: `fact-${Date.now()}-${index}`,
+      kind: "fact",
+      line: `fact_${String(index + 1).padStart(2, "0")}`,
+      body: fact,
+      tone,
+    });
+  });
+
+  response.followUpQuestions.slice(0, 2).forEach((question, index) => {
+    items.push({
+      id: `next-${Date.now()}-${index}`,
+      kind: "next",
+      line: `follow_up_${String(index + 1).padStart(2, "0")}`,
+      body: question,
+      tone,
+    });
+  });
+
+  return items;
+}
+
+function mergeCompanionLog(
+  current: CompanionLogItem[],
+  incoming: CompanionLogItem[],
+): CompanionLogItem[] {
+  return [...incoming, ...current].slice(0, 12);
+}
+
+function toneFromChatConfidence(confidence: BackendAgentChatConfidence): StatusTone {
+  switch (confidence) {
+    case "low":
+      return "ABT";
+    case "medium":
+      return "CAU";
+    default:
+      return "NOM";
+  }
+}
+
+function normalizeCommandLabel(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 44) || "agent_note";
 }
 
 function renderMissionAlert(mission: BackendMissionState): string {
@@ -1078,11 +1401,12 @@ function createHeaderModel(
   mission: BackendMissionState | null,
   planner: BackendPlannerOutput | null,
   agent: BackendAgentAnalysis | null,
+  greenhouse?: GreenhouseSummary,
 ): HeaderModel {
   if (!mission) {
     return {
       title: "AETHER",
-      subtitle: "Mars Autonomous Greenhouse",
+      subtitle: greenhouse ? `${greenhouse.code} · ${greenhouse.name}` : "Mars Autonomous Greenhouse",
       missionDay: 0,
       missionDurationTotal: 0,
       agentState: "SYNCING",
@@ -1094,7 +1418,7 @@ function createHeaderModel(
 
   return {
     title: "AETHER",
-    subtitle: "Mars Autonomous Greenhouse",
+    subtitle: greenhouse ? `${greenhouse.code} · ${greenhouse.name}` : "Mars Autonomous Greenhouse",
     missionDay: mission.missionDay,
     missionDurationTotal: mission.missionDurationDays,
     agentState: agent ? formatRiskLevel(agent.riskLevel) : planner ? formatPlannerMode(planner.mode) : "Unavailable",
@@ -2018,15 +2342,22 @@ function renderMetricTile(item: MetricTileData): string {
   });
 }
 
-function renderZoneOperationsCard(zone: BackendCropZone, isSelected: boolean): string {
+function renderZoneOperationsCard(
+  zone: BackendCropZone,
+  isSelected: boolean,
+  interactive = true,
+): string {
   const sensorReadings = buildSensorReadings(zone);
   const symptoms = zone.stress.symptoms.slice(0, 3);
+  const tag = interactive ? "button" : "div";
+  const interactionAttrs = interactive
+    ? `type="button" data-zone-select="${escapeHtml(zone.zoneId)}"`
+    : "";
 
   return `
-    <button
-      type="button"
-      class="zone-ops-card ${zoneStatusClass(zone)} ${isSelected ? "is-selected" : ""}"
-      data-zone-select="${escapeHtml(zone.zoneId)}"
+    <${tag}
+      ${interactionAttrs}
+      class="zone-ops-card ${zoneStatusClass(zone)} ${isSelected ? "is-selected" : ""} ${interactive ? "" : "zone-ops-card--static"}"
     >
       <div class="zone-ops-card__head">
         <div>
@@ -2101,7 +2432,7 @@ function renderZoneOperationsCard(zone: BackendCropZone, isSelected: boolean): s
           )
           .join("")}
       </div>
-    </button>
+    </${tag}>
   `;
 }
 
@@ -2329,6 +2660,8 @@ function renderScenarioCard(
     </article>
   `;
 }
+
+void renderScenarioCard;
 
 function renderForecastRow(label: string, before: number, after: number): string {
   return `

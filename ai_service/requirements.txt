@@ -5,4 +5,5 @@ pydantic==2.12.5
 strands-agents==1.30.0
 strands-agents-tools==0.2.22
 python-dotenv==1.2.2
+anthropic==0.72.0
 openai==2.7.1

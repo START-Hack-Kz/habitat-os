@@ -1,3 +1,4 @@
 {
-    "kiroAgent.configureMCP": "Enabled"
+    "kiroAgent.configureMCP": "Enabled",
+    "python.defaultInterpreterPath": "ai_service/.venv/Scripts/python.exe"
 }

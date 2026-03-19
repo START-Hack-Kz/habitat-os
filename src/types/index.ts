@@ -296,6 +296,17 @@ export interface HeaderModel {
   systemLabel: string;
 }
 
+export interface GreenhouseSummary {
+  id: string;
+  code: string;
+  name: string;
+  status: StatusTone;
+  nutritionContinuity: number;
+  waterReserve: number;
+  anomaly: string;
+  silhouette: "arched" | "spine" | "vault" | "spire";
+}
+
 export interface PageHero {
   eyebrow: string;
   title: string;
@@ -615,6 +626,17 @@ export interface BackendAgentAnalysis {
   triggeredByScenario: string | null;
   kbContextUsed: boolean;
   implementationStatus: "stub";
+}
+
+export type BackendAgentChatConfidence = "low" | "medium" | "high";
+
+export interface BackendAgentChatResponse {
+  answer: string;
+  relevantSection: string | null;
+  supportingFacts: string[];
+  suggestedActions: string[];
+  followUpQuestions: string[];
+  confidence: BackendAgentChatConfidence;
 }
 
 export interface BackendScenarioInjectRequest {
