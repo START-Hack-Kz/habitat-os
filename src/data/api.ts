@@ -25,8 +25,15 @@ import type {
   ScenarioInjectRequest,
 } from "../../shared/schemas/scenarioInput.schema";
 
+type AgentAnalysisFocus = "mission_overview" | "nutrition_risk" | "scenario_response";
+type AgentAnalysisRequest = {
+  focus?: AgentAnalysisFocus;
+  autoApply?: boolean;
+};
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3001").replace(/\/$/, "");
 const AI_BASE = (import.meta.env.VITE_AI_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+const AI_ANALYZE_TIMEOUT_MS = 20000;
 
 async function requestJsonFromBase<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
@@ -49,6 +56,25 @@ async function requestJsonFromBase<T>(baseUrl: string, path: string, init?: Requ
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return requestJsonFromBase<T>(API_BASE, path, init);
+}
+
+async function requestJsonFromBaseWithTimeout<T>(
+  baseUrl: string,
+  path: string,
+  timeoutMs: number,
+  init?: RequestInit,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await requestJsonFromBase<T>(baseUrl, path, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -393,11 +419,25 @@ async function fetchCanonicalPlannerOutput(): Promise<PlannerOutput> {
   });
 }
 
-async function fetchCanonicalAgentDecision(): Promise<AIDecision> {
-  return requestJson<AIDecision>("/api/agent/analyze", {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
+async function fetchCanonicalAgentDecision(
+  request: AgentAnalysisRequest = {},
+): Promise<AIDecision> {
+  try {
+    return await requestJsonFromBaseWithTimeout<AIDecision>(
+      AI_BASE,
+      "/ai/analyze",
+      AI_ANALYZE_TIMEOUT_MS,
+      {
+      method: "POST",
+      body: JSON.stringify(request),
+      },
+    );
+  } catch {
+    return requestJson<AIDecision>("/api/agent/analyze", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
 }
 
 export function fetchMissionState(): Promise<BackendMissionState> {
@@ -429,8 +469,10 @@ export async function fetchPlannerAnalysis(): Promise<BackendPlannerOutput> {
   };
 }
 
-export async function fetchAgentAnalysis(): Promise<BackendAgentAnalysis> {
-  const decision = await fetchCanonicalAgentDecision();
+export async function fetchAgentAnalysis(
+  request: AgentAnalysisRequest = {},
+): Promise<BackendAgentAnalysis> {
+  const decision = await fetchCanonicalAgentDecision(request);
   return mapAgentAnalysis(decision);
 }
 

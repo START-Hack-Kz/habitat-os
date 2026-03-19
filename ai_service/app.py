@@ -16,6 +16,19 @@ from models import AIDecision, AnalyzeRequest, ChatRequest, ChatResponse
 import agent as ai_agent
 
 
+def _parse_cors_origins() -> list[str]:
+    configured = os.getenv("AI_CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return origins or [
+        "http://localhost:3000",
+        "http://localhost:4176",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:4176",
+        "http://127.0.0.1:5173",
+    ]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"[ai-service] starting — backend: {os.getenv('BACKEND_URL', 'http://localhost:3001')}")
@@ -31,7 +44,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=_parse_cors_origins(),
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )

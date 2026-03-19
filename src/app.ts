@@ -14,6 +14,7 @@ import { getGreenhouseById, greenhouseCatalog } from "./data/greenhouses";
 import { getZoneCompositionProfile } from "./data/zoneComposition";
 import type {
   AlertLevel,
+  BackendAgentAction,
   BackendAgentAnalysis,
   BackendAgentChatConfidence,
   BackendAgentChatResponse,
@@ -42,6 +43,7 @@ import {
 } from "./ui/primitives";
 
 type AppView = "landing" | "detail";
+type AgentAnalysisFocus = "mission_overview" | "nutrition_risk" | "scenario_response";
 
 interface AppState {
   view: AppView;
@@ -53,6 +55,8 @@ interface AppState {
   scenarios: BackendScenarioCatalogItem[];
   planner: BackendPlannerOutput | null;
   agent: BackendAgentAnalysis | null;
+  agentAnalyzing: boolean;
+  agentAnalysisLabel: string;
   companionMessages: CompanionMessage[];
   companionLog: CompanionLogItem[];
   companionBusy: boolean;
@@ -134,6 +138,8 @@ const tabs: Array<{ id: TabId; label: string }> = [
   { id: "agent", label: "VI. Companion" },
 ];
 
+const MISSION_POLL_MS = resolveMissionPollMs(import.meta.env.VITE_MISSION_POLL_MS);
+
 export function renderApp(root: HTMLDivElement): void {
   const initialRoute = parseRoute(window.location.pathname);
   let landingSceneController: { dispose: () => void } | null = null;
@@ -147,6 +153,8 @@ export function renderApp(root: HTMLDivElement): void {
     scenarios: [],
     planner: null,
     agent: null,
+    agentAnalyzing: false,
+    agentAnalysisLabel: "",
     companionMessages: [],
     companionLog: [],
     companionBusy: false,
@@ -155,6 +163,12 @@ export function renderApp(root: HTMLDivElement): void {
     syncMessage: "Connecting to live mission state.",
     error: "",
   };
+  let pollTimer: number | null = null;
+  let pollInFlight = false;
+  let decisionSupportInFlight = false;
+  let lastAgentAnalysisKey = "";
+  let lastHandledAutoAnalysisKey = "";
+  let lastMissionWatchKey = "";
 
   const draw = () => {
     if (state.view === "landing") {
@@ -186,6 +200,7 @@ export function renderApp(root: HTMLDivElement): void {
           ${renderGreenhouseContextBar(greenhouse)}
           ${state.error ? renderErrorStrip(state.error) : ""}
           ${state.busy ? renderBusyStrip(state.syncMessage) : ""}
+          ${state.agentAnalyzing ? renderAgentBusyStrip(state.agentAnalysisLabel) : ""}
           ${
             state.booting && !state.mission
               ? renderBootState()
@@ -299,6 +314,10 @@ export function renderApp(root: HTMLDivElement): void {
     draw();
   });
 
+  window.addEventListener("beforeunload", () => {
+    stopMissionPolling();
+  });
+
   void bootstrap();
 
   async function bootstrap(): Promise<void> {
@@ -309,11 +328,9 @@ export function renderApp(root: HTMLDivElement): void {
     draw();
 
     try {
-      const [missionResult, scenariosResult, plannerResult, agentResult] = await Promise.allSettled([
+      const [missionResult, scenariosResult] = await Promise.allSettled([
         fetchMissionState(),
         fetchScenarioCatalog(),
-        fetchPlannerAnalysis(),
-        fetchAgentAnalysis(),
       ]);
 
       if (missionResult.status !== "fulfilled") {
@@ -322,9 +339,15 @@ export function renderApp(root: HTMLDivElement): void {
 
       state.mission = missionResult.value;
       state.scenarios = scenariosResult.status === "fulfilled" ? scenariosResult.value : [];
-      state.planner = plannerResult.status === "fulfilled" ? plannerResult.value : null;
-      state.agent = agentResult.status === "fulfilled" ? agentResult.value : null;
       syncSelections(state);
+      lastMissionWatchKey = buildMissionWatchKey(state.mission);
+      await syncDecisionSupport({
+        allowAutoAnalyze: false,
+        busyMessage: state.syncMessage,
+        showBusyStrip: false,
+        recordAutoLog: false,
+      });
+      lastHandledAutoAnalysisKey = buildAutoAnalysisKey(state.mission, state.planner);
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
@@ -332,31 +355,18 @@ export function renderApp(root: HTMLDivElement): void {
       state.booting = false;
       state.busy = false;
       state.syncMessage = "";
+      startMissionPolling();
       draw();
     }
   }
 
   async function refreshPlanner(message: string): Promise<void> {
-    state.busy = true;
-    state.syncMessage = message;
-    draw();
-
-    try {
-      const [plannerResult, agentResult] = await Promise.allSettled([
-        fetchPlannerAnalysis(),
-        fetchAgentAnalysis(),
-      ]);
-      state.planner = plannerResult.status === "fulfilled" ? plannerResult.value : null;
-      state.agent = agentResult.status === "fulfilled" ? agentResult.value : null;
-      state.error = "";
-    } catch (error) {
-      state.planner = null;
-      state.error = getErrorMessage(error);
-    } finally {
-      state.busy = false;
-      state.syncMessage = "";
-      draw();
-    }
+    await syncDecisionSupport({
+      allowAutoAnalyze: false,
+      busyMessage: message,
+      showBusyStrip: true,
+      recordAutoLog: false,
+    });
   }
 
   async function sendCompanionMessage(question: string): Promise<void> {
@@ -420,19 +430,13 @@ export function renderApp(root: HTMLDivElement): void {
       state.mission = await injectScenario({ scenarioType, severity });
       state.selectedScenarioType = scenarioType;
       syncSelections(state);
-
-      try {
-        state.planner = await fetchPlannerAnalysis();
-      } catch {
-        state.planner = null;
-      }
-
-      try {
-        state.agent = await fetchAgentAnalysis();
-      } catch {
-        state.agent = null;
-      }
-
+      lastMissionWatchKey = buildMissionWatchKey(state.mission);
+      await syncDecisionSupport({
+        allowAutoAnalyze: true,
+        busyMessage: state.syncMessage,
+        showBusyStrip: false,
+        recordAutoLog: true,
+      });
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
@@ -451,25 +455,160 @@ export function renderApp(root: HTMLDivElement): void {
     try {
       state.mission = await resetSimulation();
       syncSelections(state);
-
-      try {
-        state.planner = await fetchPlannerAnalysis();
-      } catch {
-        state.planner = null;
-      }
-
-      try {
-        state.agent = await fetchAgentAnalysis();
-      } catch {
-        state.agent = null;
-      }
-
+      lastMissionWatchKey = buildMissionWatchKey(state.mission);
+      await syncDecisionSupport({
+        allowAutoAnalyze: true,
+        busyMessage: state.syncMessage,
+        showBusyStrip: false,
+        recordAutoLog: false,
+      });
       state.error = "";
     } catch (error) {
       state.error = getErrorMessage(error);
     } finally {
       state.busy = false;
       state.syncMessage = "";
+      draw();
+    }
+  }
+
+  function startMissionPolling(): void {
+    if (pollTimer !== null) {
+      return;
+    }
+
+    pollTimer = window.setInterval(() => {
+      void syncMissionStateFromPoll();
+    }, MISSION_POLL_MS);
+  }
+
+  function stopMissionPolling(): void {
+    if (pollTimer === null) {
+      return;
+    }
+
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  async function syncMissionStateFromPoll(): Promise<void> {
+    if (pollInFlight || decisionSupportInFlight || state.busy) {
+      return;
+    }
+
+    pollInFlight = true;
+
+    try {
+      const nextMission = await fetchMissionState();
+      const nextMissionWatchKey = buildMissionWatchKey(nextMission);
+
+      if (state.mission && nextMissionWatchKey === lastMissionWatchKey) {
+        return;
+      }
+
+      state.mission = nextMission;
+      lastMissionWatchKey = nextMissionWatchKey;
+      syncSelections(state);
+      await syncDecisionSupport({
+        allowAutoAnalyze: true,
+        busyMessage: "",
+        showBusyStrip: false,
+        recordAutoLog: true,
+      });
+    } catch (error) {
+      if (!state.mission) {
+        state.error = getErrorMessage(error);
+        draw();
+      }
+    } finally {
+      pollInFlight = false;
+    }
+  }
+
+  async function syncDecisionSupport(options: {
+    allowAutoAnalyze: boolean;
+    busyMessage: string;
+    showBusyStrip: boolean;
+    recordAutoLog: boolean;
+  }): Promise<void> {
+    if (!state.mission || decisionSupportInFlight) {
+      return;
+    }
+
+    decisionSupportInFlight = true;
+
+    if (options.showBusyStrip) {
+      state.busy = true;
+      state.syncMessage = options.busyMessage;
+      draw();
+    }
+
+    try {
+      try {
+        state.planner = await fetchPlannerAnalysis();
+      } catch {
+        state.planner = null;
+      }
+
+      const focus = deriveAgentAnalysisFocus(state.mission, state.planner);
+      const analysisKey = buildAgentAnalysisKey(state.mission, focus);
+      const autoAnalysisKey = options.allowAutoAnalyze
+        ? buildAutoAnalysisKey(state.mission, state.planner, focus)
+        : "";
+      const shouldRunAutoAnalyze =
+        autoAnalysisKey.length > 0 && autoAnalysisKey !== lastHandledAutoAnalysisKey;
+      const shouldRefreshAgent = shouldRunAutoAnalyze || !state.agent || analysisKey !== lastAgentAnalysisKey;
+
+      if (shouldRefreshAgent) {
+        state.agentAnalyzing = true;
+        state.agentAnalysisLabel = buildAgentAnalysisLabel(state.mission, focus);
+        draw();
+
+        state.agent = await fetchAgentAnalysis({ focus });
+        lastAgentAnalysisKey = analysisKey;
+
+        if (shouldRunAutoAnalyze) {
+          lastHandledAutoAnalysisKey = autoAnalysisKey;
+
+          if (options.recordAutoLog) {
+            state.companionLog = mergeCompanionLog(
+              state.companionLog,
+              buildAutoAnalysisLogItems(state.agent, focus),
+            );
+          }
+
+          state.companionMessages = [
+            ...state.companionMessages,
+            buildAutoAnalysisMessage(state.agent, focus),
+          ];
+        }
+      }
+
+      state.error = "";
+    } catch (error) {
+      if (options.showBusyStrip) {
+        state.error = getErrorMessage(error);
+      } else if (options.recordAutoLog) {
+        state.companionLog = mergeCompanionLog(state.companionLog, [
+          {
+            id: `auto-analysis-error-${Date.now()}`,
+            kind: "fact",
+            line: "auto_analyze_fault",
+            body: `AETHER could not refresh the incident analysis: ${getErrorMessage(error)}`,
+            tone: "ABT",
+          },
+        ]);
+      }
+    } finally {
+      decisionSupportInFlight = false;
+      state.agentAnalyzing = false;
+      state.agentAnalysisLabel = "";
+
+      if (options.showBusyStrip) {
+        state.busy = false;
+        state.syncMessage = "";
+      }
+
       draw();
     }
   }
@@ -534,15 +673,17 @@ function renderPage(state: AppState): string {
     return renderBootState();
   }
 
+  const displayMission = deriveAgentSuggestedMission(state.mission, state.agent);
+
   switch (state.activeTab) {
     case "overview":
-      return renderOverview(state.mission, state.planner);
+      return renderOverview(displayMission, state.planner, state.agent, state.agentAnalyzing);
     case "crops":
-      return renderCrops(state.mission, state.selectedZoneId);
+      return renderCrops(displayMission, state.selectedZoneId);
     case "resources":
-      return renderResources(state.mission, state.planner);
+      return renderResources(displayMission, state.planner);
     case "nutrition":
-      return renderNutrition(state.mission, state.planner);
+      return renderNutrition(displayMission, state.planner);
     case "risk":
       return renderRisk(state.mission);
     case "agent":
@@ -553,15 +694,19 @@ function renderPage(state: AppState): string {
         state.companionMessages,
         state.companionLog,
         state.companionBusy,
+        state.agentAnalyzing,
+        state.agentAnalysisLabel,
       );
     default:
-      return renderOverview(state.mission, state.planner);
+      return renderOverview(displayMission, state.planner, state.agent, state.agentAnalyzing);
   }
 }
 
 function renderOverview(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
+  agent: BackendAgentAnalysis | null,
+  agentAnalyzing: boolean,
 ): string {
   const metrics = buildOverviewMetrics(mission);
 
@@ -660,7 +805,7 @@ function renderOverview(
           ${renderPanel({
             title: "Incident / Planner",
             dotColor: "var(--cau)",
-            children: renderIncidentPanel(mission, planner),
+            children: renderIncidentPanel(mission, planner, agent, agentAnalyzing),
           })}
         </div>
       </div>
@@ -1109,6 +1254,8 @@ function renderAgent(
   messages: CompanionMessage[],
   log: CompanionLogItem[],
   companionBusy: boolean,
+  agentAnalyzing: boolean,
+  agentAnalysisLabel: string,
 ): string {
   return `
     <section class="agent-tab">
@@ -1155,13 +1302,20 @@ function renderAgent(
                         )
                         .join("")}
                       ${
-                        companionBusy
+                        companionBusy || agentAnalyzing
                           ? `
                               <article class="agent-uplink__message agent-uplink__message--agent">
                                 <div class="agent-uplink__avatar agent-uplink__avatar--agent">AE</div>
                                 <div class="agent-uplink__bubble agent-uplink__bubble--agent">
                                   <p class="agent-uplink__message-role mono">AETHER</p>
-                                  <p class="agent-uplink__message-text">Processing mission context and composing a grounded response.</p>
+                                  <p class="agent-uplink__message-text">${
+                                    companionBusy
+                                      ? "Processing mission context and composing a grounded response."
+                                      : escapeHtml(
+                                          agentAnalysisLabel ||
+                                            "Analyzing the latest mission shift and preparing an incident brief.",
+                                        )
+                                  }</p>
                                 </div>
                               </article>
                             `
@@ -1341,6 +1495,18 @@ function toneFromChatConfidence(confidence: BackendAgentChatConfidence): StatusT
   }
 }
 
+function toneFromRiskLevel(riskLevel: BackendAgentAnalysis["riskLevel"]): StatusTone {
+  switch (riskLevel) {
+    case "critical":
+      return "ABT";
+    case "high":
+    case "moderate":
+      return "CAU";
+    default:
+      return "NOM";
+  }
+}
+
 function normalizeCommandLabel(value: string): string {
   return value
     .toLowerCase()
@@ -1365,6 +1531,165 @@ function renderMissionAlert(mission: BackendMissionState): string {
   });
 }
 
+function deriveAgentAnalysisFocus(
+  mission: BackendMissionState,
+  planner: BackendPlannerOutput | null,
+): AgentAnalysisFocus {
+  if (mission.activeScenario) {
+    return "scenario_response";
+  }
+
+  if (
+    planner?.nutritionRiskDetected ||
+    mission.status !== "nominal" ||
+    mission.zones.some((zone) => zone.stress.active || zone.status !== "healthy") ||
+    mission.resources.waterDaysRemaining < 120 ||
+    mission.resources.energyDaysRemaining < 60
+  ) {
+    return "nutrition_risk";
+  }
+
+  return "mission_overview";
+}
+
+function getLatestNonAiEvent(mission: BackendMissionState): BackendEventLogEntry | undefined {
+  return mission.eventLog.find((entry) => entry.type !== "ai_action");
+}
+
+function buildMissionWatchKey(mission: BackendMissionState): string {
+  const latestNonAiEvent = getLatestNonAiEvent(mission);
+  const zoneStateKey = mission.zones
+    .map(
+      (zone) =>
+        `${zone.zoneId}:${zone.status}:${zone.stress.active ? zone.stress.type : "none"}:${zone.stress.severity}`,
+    )
+    .join("|");
+  const resourceKey = [
+    `water:${Math.round(mission.resources.waterDaysRemaining)}`,
+    `energy:${Math.round(mission.resources.energyDaysRemaining)}`,
+    `recycle:${Math.round(mission.resources.waterRecyclingEfficiencyPercent)}`,
+    `cal:${Math.round(mission.nutrition.caloricCoveragePercent)}`,
+    `protein:${Math.round(mission.nutrition.proteinCoveragePercent)}`,
+  ].join("|");
+
+  return [
+    mission.status,
+    mission.activeScenario?.scenarioId ?? "no-scenario",
+    latestNonAiEvent?.eventId ?? "no-event",
+    zoneStateKey,
+    resourceKey,
+  ].join("::");
+}
+
+function buildAgentAnalysisKey(
+  mission: BackendMissionState,
+  focus: AgentAnalysisFocus,
+): string {
+  const latestNonAiEvent = getLatestNonAiEvent(mission);
+
+  return [
+    focus,
+    mission.status,
+    mission.activeScenario?.scenarioId ?? "no-scenario",
+    latestNonAiEvent?.eventId ?? mission.lastUpdated,
+  ].join("::");
+}
+
+function buildAutoAnalysisKey(
+  mission: BackendMissionState,
+  planner: BackendPlannerOutput | null,
+  focus?: AgentAnalysisFocus,
+): string {
+  const analysisFocus = focus ?? deriveAgentAnalysisFocus(mission, planner);
+  const latestNonAiEvent = getLatestNonAiEvent(mission);
+  const hasIncident =
+    Boolean(mission.activeScenario) ||
+    Boolean(planner?.nutritionRiskDetected) ||
+    mission.status !== "nominal" ||
+    mission.zones.some(
+      (zone) => zone.stress.active || zone.status === "critical" || zone.status === "offline",
+    );
+
+  if (!hasIncident) {
+    return "";
+  }
+
+  return [
+    analysisFocus,
+    mission.activeScenario?.scenarioId ?? "no-scenario",
+    latestNonAiEvent?.eventId ?? mission.lastUpdated,
+  ].join("::");
+}
+
+function buildAutoAnalysisLogItems(
+  agent: BackendAgentAnalysis,
+  focus: AgentAnalysisFocus,
+): CompanionLogItem[] {
+  const tone = toneFromRiskLevel(agent.riskLevel);
+  const items: CompanionLogItem[] = [
+    {
+      id: `auto-analysis-${Date.now()}`,
+      kind: "cmd",
+      line: `auto_analyze_${normalizeCommandLabel(focus)}`,
+      body: agent.riskSummary,
+      tone,
+    },
+  ];
+
+  if (agent.recommendedActions.length > 0) {
+    items.push({
+      id: `auto-analysis-actions-${Date.now()}`,
+      kind: "next",
+      line: "recommended_reallocation",
+      body: agent.recommendedActions
+        .slice(0, 3)
+        .map((action) =>
+          action.targetZoneId
+            ? `${action.targetZoneId}: ${formatActionType(action.type)}`
+            : formatActionType(action.type),
+        )
+        .join(" · "),
+      tone,
+    });
+  }
+
+  return items;
+}
+
+function buildAutoAnalysisMessage(
+  agent: BackendAgentAnalysis,
+  focus: AgentAnalysisFocus,
+): CompanionMessage {
+  const actionSummary = agent.recommendedActions
+    .slice(0, 2)
+    .map((action) =>
+      action.targetZoneId ? `${action.targetZoneId}: ${formatActionType(action.type)}` : formatActionType(action.type),
+    )
+    .join(" · ");
+
+  return {
+    id: `auto-brief-${Date.now()}`,
+    role: "agent",
+    text: `${agent.riskSummary} ${agent.explanation}${actionSummary ? ` Recommended actions: ${actionSummary}.` : ""}`,
+    meta: `auto incident brief · ${focus.replaceAll("_", " ")}`,
+  };
+}
+
+function buildAgentAnalysisLabel(
+  mission: BackendMissionState,
+  focus: AgentAnalysisFocus,
+): string {
+  if (focus === "scenario_response" && mission.activeScenario) {
+    return `AETHER is analyzing ${mission.activeScenario.title} and computing the response plan.`;
+  }
+
+  if (focus === "nutrition_risk") {
+    return "AETHER is reviewing resource pressure and nutrition continuity risk.";
+  }
+
+  return "AETHER is reviewing the latest mission state.";
+}
+
 function renderRiskAlert(mission: BackendMissionState): string {
   if (mission.activeScenario) {
     return renderAlertStrip({
@@ -1386,6 +1711,16 @@ function renderBusyStrip(message: string): string {
     level: "cau",
     label: "Sync",
     children: message,
+    loading: true,
+  });
+}
+
+function renderAgentBusyStrip(message: string): string {
+  return renderAlertStrip({
+    level: "cau",
+    label: "AI Analyze",
+    children: message || "AETHER is reviewing the latest mission change and preparing a grounded response.",
+    loading: true,
   });
 }
 
@@ -1475,6 +1810,115 @@ function syncSelections(state: AppState): void {
   state.selectedScenarioType = scenarioExists
     ? state.selectedScenarioType
     : activeScenarioType || firstScenarioType;
+}
+
+function deriveAgentSuggestedMission(
+  mission: BackendMissionState,
+  agent: BackendAgentAnalysis | null,
+): BackendMissionState {
+  if (!agent || agent.recommendedActions.length === 0 || agent.riskLevel === "low") {
+    return mission;
+  }
+
+  const zones = mission.zones.map((zone) => ({
+    ...zone,
+    sensors: {
+      ...zone.sensors,
+    },
+    stress: {
+      ...zone.stress,
+      symptoms: [...zone.stress.symptoms],
+    },
+  }));
+
+  const overlayMission: BackendMissionState = {
+    ...mission,
+    zones,
+    resources: {
+      ...mission.resources,
+    },
+    nutrition: {
+      ...mission.nutrition,
+    },
+    eventLog: [...mission.eventLog],
+  };
+
+  for (const action of agent.recommendedActions) {
+    for (const [rawKey, rawValue] of Object.entries(action.parameterChanges)) {
+      if (typeof rawValue !== "number") {
+        continue;
+      }
+
+      const match = rawKey.match(/^([^.]+)\.(.+)$/);
+
+      if (!match) {
+        continue;
+      }
+
+      const [, zoneId, field] = match;
+      const zone = overlayMission.zones.find((candidate) => candidate.zoneId === zoneId);
+
+      if (!zone) {
+        continue;
+      }
+
+      applyZoneParameterChange(zone, field, rawValue);
+    }
+  }
+
+  overlayMission.nutrition = {
+    ...overlayMission.nutrition,
+    caloricCoveragePercent: agent.comparison.after.caloricCoveragePercent,
+    proteinCoveragePercent: agent.comparison.after.proteinCoveragePercent,
+    nutritionalCoverageScore: agent.comparison.after.nutritionalCoverageScore,
+    daysSafe: agent.comparison.after.daysSafe,
+    trend:
+      agent.comparison.delta.scoreDelta > 0
+        ? "improving"
+        : agent.comparison.delta.scoreDelta < 0
+          ? "declining"
+          : overlayMission.nutrition.trend,
+  };
+
+  return overlayMission;
+}
+
+function applyZoneParameterChange(
+  zone: BackendCropZone,
+  field: string,
+  value: number,
+): void {
+  switch (field) {
+    case "allocationPercent":
+      zone.allocationPercent = value;
+      return;
+    case "projectedYieldKg":
+      zone.projectedYieldKg = value;
+      return;
+    case "lightPAR":
+      zone.sensors.lightPAR = value;
+      return;
+    case "photoperiodHours":
+      zone.sensors.photoperiodHours = value;
+      return;
+    case "soilMoisture":
+      zone.sensors.soilMoisture = value;
+      return;
+    case "temperature":
+      zone.sensors.temperature = value;
+      return;
+    case "humidity":
+      zone.sensors.humidity = value;
+      return;
+    case "nutrientPH":
+      zone.sensors.nutrientPH = value;
+      return;
+    case "electricalConductivity":
+      zone.sensors.electricalConductivity = value;
+      return;
+    default:
+      return;
+  }
 }
 
 function getSelectedZone(mission: BackendMissionState, selectedZoneId: string): BackendCropZone {
@@ -2550,6 +2994,8 @@ function renderResourceTile(tile: OverviewResourceTileData): string {
 function renderIncidentPanel(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
+  agent: BackendAgentAnalysis | null,
+  agentAnalyzing: boolean,
 ): string {
   const primaryChange = planner?.changes[0];
   const primaryFlag = planner?.stressFlags[0];
@@ -2578,6 +3024,13 @@ function renderIncidentPanel(
         <span class="incident-panel__value mono">${planner?.changes.length ?? 0}</span>
       </div>
       <div class="incident-panel__row">
+        <span class="incident-panel__label">AETHER</span>
+        <span class="incident-panel__value">${renderStatusBadge(
+          agent ? formatRiskLevel(agent.riskLevel) : "Awaiting analysis",
+          agent ? toneFromRiskLevel(agent.riskLevel) : "CAU",
+        )}</span>
+      </div>
+      <div class="incident-panel__row">
         <span class="incident-panel__label">Primary watch</span>
         <span class="incident-panel__value incident-panel__value--wrap">
           ${
@@ -2602,6 +3055,103 @@ function renderIncidentPanel(
               children:
                 "No injected failure scenario is active. Planner remains in monitoring mode and the dashboard is rendering the live mission snapshot.",
             })
+      }
+      ${
+        agentAnalyzing
+          ? renderNotice({
+              level: "info",
+              title: "AI in progress",
+              children:
+                "AETHER is analyzing the latest mission change and refreshing the incident response forecast.",
+            })
+          : ""
+      }
+      ${
+        agent
+          ? renderNotice({
+              level: noticeFromTone(toneFromRiskLevel(agent.riskLevel)),
+              title: "AI explanation",
+              children: agent.explanation,
+            })
+          : ""
+      }
+      ${
+        agent
+          ? renderNotice({
+              level: "info",
+              title: "AI summary",
+              children: agent.riskSummary,
+            })
+          : ""
+      }
+      ${
+        agent
+          ? `
+              <div class="failure-realloc-col__rows">
+                <div class="failure-realloc-row">
+                  <span class="failure-realloc-row__label">Caloric coverage</span>
+                  <span class="failure-realloc-row__value mono">
+                    ${agent.comparison.before.caloricCoveragePercent}% → ${agent.comparison.after.caloricCoveragePercent}%
+                    (${formatSignedDelta(agent.comparison.delta.caloricCoverageDelta)} pts)
+                  </span>
+                </div>
+                <div class="failure-realloc-row">
+                  <span class="failure-realloc-row__label">Protein coverage</span>
+                  <span class="failure-realloc-row__value mono">
+                    ${agent.comparison.before.proteinCoveragePercent}% → ${agent.comparison.after.proteinCoveragePercent}%
+                    (${formatSignedDelta(agent.comparison.delta.proteinCoverageDelta)} pts)
+                  </span>
+                </div>
+                <div class="failure-realloc-row">
+                  <span class="failure-realloc-row__label">Nutrition score</span>
+                  <span class="failure-realloc-row__value mono">
+                    ${agent.comparison.before.nutritionalCoverageScore} → ${agent.comparison.after.nutritionalCoverageScore}
+                    (${formatSignedDelta(agent.comparison.delta.scoreDelta)} pts)
+                  </span>
+                </div>
+                <div class="failure-realloc-row">
+                  <span class="failure-realloc-row__label">Days safe</span>
+                  <span class="failure-realloc-row__value mono">
+                    ${agent.comparison.before.daysSafe} → ${agent.comparison.after.daysSafe}
+                    (${formatSignedDelta(agent.comparison.delta.daysSafeDelta)} d)
+                  </span>
+                </div>
+              </div>
+            `
+          : ""
+      }
+      ${
+        agent && agent.recommendedActions.length > 0
+          ? `
+              <div class="failure-realloc-col__rows">
+                ${agent.recommendedActions
+                  .slice(0, 3)
+                  .map(
+                    (action) => `
+                      <div class="failure-realloc-row">
+                        <span class="failure-realloc-row__label">
+                          ${escapeHtml(
+                            action.targetZoneId
+                              ? `${action.targetZoneId} · ${formatActionType(action.type)}`
+                              : formatActionType(action.type),
+                          )}
+                        </span>
+                        <span class="failure-realloc-row__value">
+                          ${renderStatusBadge(action.urgency, toneFromUrgency(action.urgency))}<br>
+                          ${escapeHtml(action.description)}
+                          ${
+                            Object.keys(action.parameterChanges).length > 0
+                              ? `<br><span class="mono">${escapeHtml(formatParameterChanges(action.parameterChanges))}</span>`
+                              : ""
+                          }
+                        </span>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `
+          : ""
       }
     </div>
   `;
@@ -2861,6 +3411,13 @@ function formatScenarioSeverity(severity: BackendScenarioSeverity): string {
   return severity.slice(0, 1).toUpperCase() + severity.slice(1);
 }
 
+function formatActionType(value: string): string {
+  return value
+    .split("_")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function formatPlannerMode(mode: BackendPlannerOutput["mode"] | undefined): string {
   return (mode ?? "normal")
     .split("_")
@@ -2895,6 +3452,21 @@ function formatPlannerValue(value: string | number | boolean): string {
   return String(value);
 }
 
+function formatParameterChanges(parameterChanges: Record<string, number>): string {
+  return Object.entries(parameterChanges)
+    .slice(0, 4)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" · ");
+}
+
+function formatSignedDelta(value: number): string {
+  if (value > 0) {
+    return `+${value}`;
+  }
+
+  return String(value);
+}
+
 function formatNutrientMixStatus(status: BackendMissionState["resources"]["nutrientMixStatus"]): string {
   return status.replaceAll("_", " ");
 }
@@ -2915,6 +3487,18 @@ function formatTimestamp(value: string): string {
   }
 
   return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}Z`;
+}
+
+function toneFromUrgency(urgency: BackendAgentAction["urgency"]): StatusTone {
+  if (urgency === "immediate") {
+    return "ABT";
+  }
+
+  if (urgency === "within_24h") {
+    return "CAU";
+  }
+
+  return "NOM";
 }
 
 function toneColor(tone: StatusTone): string {
@@ -2954,6 +3538,16 @@ function deriveDisplayedCoveragePercent(produced: number, target: number): numbe
   }
 
   return Math.round((produced / target) * 100);
+}
+
+function resolveMissionPollMs(rawValue: string | undefined): number {
+  const parsed = Number(rawValue);
+
+  if (Number.isFinite(parsed) && parsed >= 1000) {
+    return parsed;
+  }
+
+  return 5000;
 }
 
 function getErrorMessage(error: unknown): string {

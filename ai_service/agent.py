@@ -248,14 +248,14 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"Could not extract JSON from agent response: {text[:500]}")
 
 
-def _get_backend_stub_decision() -> dict | None:
+def _get_backend_stub_decision(payload: dict | None = None) -> dict | None:
     """
     Call the existing TypeScript backend agent stub to get recommended actions.
     The stub owns the deterministic planner execution — we reuse it rather than
     reimplementing the action logic in Python.
     """
     try:
-        resp = _client.post("/api/agent/analyze", json={})
+        resp = _client.post("/api/agent/analyze", json=payload or {})
         resp.raise_for_status()
         return resp.json()
     except Exception:
@@ -428,7 +428,14 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
     Run incident analysis on the current mission state.
     Uses the Strands agent with tools; falls back to deterministic analysis if LLM fails.
     """
-    # Always fetch current state for fallback
+    stub_request = {
+        "focus": request.focus,
+        "autoApply": request.autoApply,
+    }
+    stub_decision_data = _get_backend_stub_decision(stub_request)
+
+    # Always fetch current state for fallback. If auto-apply ran through the backend stub,
+    # these reads reflect the post-apply mission state.
     raw_mission = json.loads(getMissionState._tool_func())
     raw_planner = json.loads(runPlannerAnalysis._tool_func())
     mission = MissionState.model_validate(raw_mission)
@@ -442,7 +449,17 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
 
     prompt = _ANALYZE_PROMPT + focus_hint
     fallback_decision = _fallback_analyze(mission, planner)
+    if stub_decision_data is not None:
+        try:
+            fallback_decision = AIDecision.model_validate(stub_decision_data)
+        except Exception:
+            pass
     reset_kb_usage()
+
+    # Auto-apply must remain deterministic and authoritative. Use the backend stub's
+    # applied result directly instead of asking the LLM to regenerate the full object.
+    if request.autoApply:
+        return fallback_decision
 
     try:
         with _analyze_tool_context() as tools:

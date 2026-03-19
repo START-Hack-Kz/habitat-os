@@ -6,6 +6,7 @@ declare module "*?raw" {
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;
   readonly VITE_AI_BASE_URL?: string;
+  readonly VITE_MISSION_POLL_MS?: string;
 }
 
 interface ImportMeta {
