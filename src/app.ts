@@ -4,8 +4,11 @@ import {
   cropDependencies,
   cropMetrics,
   cropStages,
+  emergencyLog,
   energyGauges,
   envParams,
+  failureRealloc,
+  failureImpact,
   fragility,
   fullAgentLog,
   headerModel,
@@ -16,11 +19,14 @@ import {
   overviewAlert,
   overviewGridCells,
   overviewMetrics,
-  overviewLog,
+  npkGauges,
   pageContentByTab,
   repoSignals,
+  resourceMetrics,
   riskAlert,
+  riskMetrics,
   riskGauges,
+  scenarioSimulations,
   scenarios,
   timeline,
   tradeoffs,
@@ -31,20 +37,22 @@ import type {
   CropData,
   CropMetric,
   CropDependencyRow,
+  EmergencyEntry,
   EnvParam,
-  FragilityItem,
+  FailureReallocColumn,
+  FailureImpactColumn,
   FullAgentLogItem,
   GaugeItem,
   GridCell,
   MissionMemoryItem,
   NutrientRow,
   OverviewMetric,
+  RiskMetric,
   ScenarioCard,
   StatusTone,
   TabId,
   TimelineEvent,
   Tradeoff,
-  WaterAllocItem,
 } from "./types";
 import { renderHeader } from "./components/header";
 import { renderNavigation } from "./components/navigation";
@@ -67,6 +75,27 @@ export function renderApp(root: HTMLDivElement): void {
   let activeTab: TabId = "overview";
   let overviewAlertDismissed = false;
   let selectedCropId = crops.find((crop) => crop.healthLevel !== "NOM")?.id ?? crops[0]?.id ?? "";
+  let selectedScenarioId = scenarioSimulations[0]?.id ?? "";
+  let expandedEmergencyId = emergencyLog[0]?.id ?? "";
+
+  const renderPage = (): string => {
+    switch (activeTab) {
+      case "overview":
+        return renderOverview(overviewAlertDismissed);
+      case "crops":
+        return renderCrops(selectedCropId);
+      case "resources":
+        return renderResources();
+      case "nutrition":
+        return renderNutrition();
+      case "risk":
+        return renderRisk(selectedScenarioId, expandedEmergencyId);
+      case "agent":
+        return renderAgent();
+      default:
+        return renderOverview(false);
+    }
+  };
 
   const draw = () => {
     const activePage = pageContentByTab[activeTab];
@@ -119,7 +148,7 @@ export function renderApp(root: HTMLDivElement): void {
                 : ""
             }
 
-            ${renderPage(activeTab, overviewAlertDismissed)}
+            ${renderPage()}
           </main>
         </div>
       </div>
@@ -135,6 +164,8 @@ export function renderApp(root: HTMLDivElement): void {
 
     const button = target.closest<HTMLButtonElement>("[data-tab-target]");
     const cropCard = target.closest<HTMLElement>("[data-crop-select]");
+    const emergencyToggle = target.closest<HTMLElement>("[data-emergency-toggle]");
+    const scenarioToggle = target.closest<HTMLElement>("[data-scenario-sim]");
 
     if (cropCard) {
       const nextCropId = cropCard.dataset.cropSelect;
@@ -144,6 +175,20 @@ export function renderApp(root: HTMLDivElement): void {
         draw();
       }
 
+      return;
+    }
+
+    if (emergencyToggle) {
+      const nextEmergencyId = emergencyToggle.dataset.emergencyToggle ?? "";
+      expandedEmergencyId = expandedEmergencyId === nextEmergencyId ? "" : nextEmergencyId;
+      draw();
+      return;
+    }
+
+    if (scenarioToggle) {
+      const nextScenarioId = scenarioToggle.dataset.scenarioSim ?? "";
+      selectedScenarioId = nextScenarioId;
+      draw();
       return;
     }
 
@@ -165,25 +210,6 @@ export function renderApp(root: HTMLDivElement): void {
   });
 
   draw();
-}
-
-function renderPage(activeTab: TabId, overviewAlertDismissed: boolean): string {
-  switch (activeTab) {
-    case "overview":
-      return renderOverview(overviewAlertDismissed);
-    case "crops":
-      return renderCrops(selectedCropId);
-    case "resources":
-      return renderResources();
-    case "nutrition":
-      return renderNutrition();
-    case "risk":
-      return renderRisk();
-    case "agent":
-      return renderAgent();
-    default:
-      return renderOverview(false);
-  }
 }
 
 function renderOverview(overviewAlertDismissed: boolean): string {
@@ -382,33 +408,25 @@ function renderCrops(selectedCropId: string): string {
 }
 
 function renderResources(): string {
-  return `
-    <section class="content-grid">
-      ${renderPanel({
-        title: "Environmental Parameters",
-        dotColor: "var(--aero-blue)",
-        children: `
-          <div class="ui-gauge-list">
-            ${envParams
-              .map((item) =>
-                renderGaugeBar({
-                  name: item.label,
-                  value: `${item.value} ${item.unit}`,
-                  fillPct: item.fillPct,
-                  fillColor: item.fillCol,
-                  label: "Live telemetry",
-                  valueMuted: item.warmFlag,
-                }),
-              )
-              .join("")}
-          </div>
-        `,
-      })}
+  const waterNotice = "Zone F is offline while the active AI rationale protects potato and bean allocation first.";
 
-      ${renderPanel({
-        title: "Water Allocation",
-        dotColor: "var(--mars-orange)",
-        children: `
+  return `
+    <section class="resources-tab">
+      <div class="resource-kpi-row">
+        ${resourceMetrics.map((item) => renderResourceMetric(item)).join("")}
+      </div>
+
+      <div class="resource-main-row">
+        ${renderPanel({
+          title: "Water Allocation",
+          dotColor: "var(--aero-blue)",
+          rightSlot: `
+            <div class="resource-panel-actions">
+              ${renderStatusBadge("Zone B adjusted", "CAU")}
+              ${renderAeroButton({ label: "Override", tone: "primary" })}
+            </div>
+          `,
+          children: `
           <div class="ui-alloc-list">
             ${waterAlloc
               .map((item) =>
@@ -422,13 +440,45 @@ function renderResources(): string {
               )
               .join("")}
           </div>
+          ${renderNotice({
+            level: "info",
+            title: "Water Allocation",
+            children: waterNotice,
+          })}
         `,
-      })}
+        })}
 
-      ${renderPanel({
-        title: "Energy Systems",
-        dotColor: "var(--nom)",
-        children: `
+        <div class="resource-stack">
+          ${renderPanel({
+            title: "NPK Reserve",
+            dotColor: "var(--abt)",
+            children: `
+          <div class="ui-gauge-list">
+            ${npkGauges
+              .map((item) =>
+                renderGaugeBar({
+                  name: item.label,
+                  value: item.value,
+                  fillPct: item.fillPct,
+                  fillColor: item.fillColor,
+                  label: "Reserve ratio",
+                  valueMuted: item.level,
+                }),
+              )
+              .join("")}
+          </div>
+          ${renderNotice({
+            level: "crit",
+            title: "Critical Reserve",
+            children: "Phosphorus remains the limiting NPK reserve. Resupply timing is now part of the resource failure story.",
+          })}
+        `,
+          })}
+
+          ${renderPanel({
+            title: "Energy Systems",
+            dotColor: "var(--nom)",
+            children: `
           <div class="ui-gauge-list">
             ${energyGauges
               .map((item) =>
@@ -442,6 +492,23 @@ function renderResources(): string {
                 }),
               )
               .join("")}
+          </div>
+          ${renderNotice({
+            level: "ok",
+            title: "Solar Efficiency",
+            children: "Generation remains slightly under consumption, but staged loads keep pumps and sensor rails stable.",
+          })}
+        `,
+          })}
+        </div>
+      </div>
+
+      ${renderPanel({
+        title: "Failure Reallocation Protocol",
+        dotColor: "var(--abt)",
+        children: `
+          <div class="failure-realloc-grid">
+            ${failureRealloc.map((column) => renderFailureReallocColumn(column)).join("")}
           </div>
         `,
       })}
@@ -507,7 +574,7 @@ function renderNutrition(): string {
   `;
 }
 
-function renderRisk(): string {
+function renderRiskLegacy(): string {
   return `
     ${renderAlertStrip({
       level: riskAlert.level,
@@ -552,6 +619,121 @@ function renderRisk(): string {
           <div class="ui-log-list">
             ${timeline.slice(0, 5).map((item) => renderTimelineLog(item)).join("")}
             ${missionMemory.map((item) => renderMemoryLog(item)).join("")}
+          </div>
+        `,
+      })}
+    </section>
+  `;
+}
+
+function renderRisk(selectedScenarioId: string, expandedEmergencyId: string): string {
+  const selectedScenario =
+    scenarioSimulations.find((item) => item.id === selectedScenarioId) ?? scenarioSimulations[0];
+
+  return `
+    ${renderAlertStrip({
+      level: "abt",
+      label: "Emergency",
+      children:
+        "EMERGENCY DETECTED - Radish germination failure Zone C confirmed. Zone B moisture under investigation.",
+    })}
+
+    <section class="risk-tab">
+      <div class="risk-kpi-row">
+        ${riskMetrics.map((item) => renderRiskMetric(item)).join("")}
+      </div>
+
+      <div class="risk-main-row">
+        ${renderPanel({
+          title: "Emergency Log",
+          dotColor: "var(--abt)",
+          rightSlot: renderAeroButton({ label: "Declare Emergency", tone: "danger" }),
+          children: `
+            <div class="risk-emergency-list">
+              ${emergencyLog
+                .map((item) => renderEmergencyEntry(item, item.id === expandedEmergencyId))
+                .join("")}
+            </div>
+          `,
+        })}
+
+        ${renderPanel({
+          title: "Risk Gauges",
+          dotColor: "var(--cau)",
+          children: `
+            <div class="ui-gauge-list">
+              ${riskGauges
+                .map((item) =>
+                  renderGaugeBar({
+                    name: item.label,
+                    value: item.value,
+                    fillPct: item.fillPct,
+                    fillColor: item.fillColor,
+                    label: "Risk band",
+                    valueMuted: item.level,
+                  }),
+                )
+                .join("")}
+            </div>
+            ${renderNotice({
+              level: "warn",
+              title: "Risk Note",
+              children: "Top 3 gauges remain caution-fill while lower baseline gauges stay nominal for contrast.",
+            })}
+          `,
+        })}
+      </div>
+
+      ${renderPanel({
+        title: "Scenario Simulator",
+        dotColor: "var(--aero-blue)",
+        children: `
+          <div class="scenario-sim">
+            <div class="scenario-sim__actions">
+              ${scenarioSimulations
+                .map(
+                  (item) => `
+                    <button
+                      type="button"
+                      class="scenario-sim__btn ${item.id === selectedScenario.id ? "is-active" : ""}"
+                      data-scenario-sim="${item.id}"
+                    >
+                      ${item.label}
+                    </button>
+                  `,
+                )
+                .join("")}
+            </div>
+            <p class="scenario-sim__note">${selectedScenario.note}</p>
+            <div class="scenario-sim__compare">
+              <div class="scenario-sim__panel">
+                <p class="scenario-sim__title">Before</p>
+                ${selectedScenario.before
+                  .map((row) => renderKeyValueRow(row.label, row.value))
+                  .join("")}
+              </div>
+              <div class="scenario-sim__panel">
+                <p class="scenario-sim__title">After</p>
+                ${selectedScenario.after
+                  .map((row) => renderKeyValueRow(row.label, row.value, row.level))
+                  .join("")}
+              </div>
+            </div>
+            ${renderNotice({
+              level: selectedScenario.level === "ABT" ? "crit" : "warn",
+              title: "Scenario Cost",
+              children: "React state only for M10. This mirrors the documented simulator flow without mutating backend state yet.",
+            })}
+          </div>
+        `,
+      })}
+
+      ${renderPanel({
+        title: "Failure Impact Forecast",
+        dotColor: "var(--abt)",
+        children: `
+          <div class="failure-impact-grid">
+            ${failureImpact.map((column) => renderFailureImpactColumn(column)).join("")}
           </div>
         `,
       })}
@@ -617,6 +799,35 @@ function renderOverviewMetric(item: OverviewMetric): string {
 }
 
 function renderCropMetric(item: CropMetric): string {
+  return renderKpiTile({
+    label: item.label,
+    value: item.value,
+    sub: item.sub,
+    level: item.level,
+    progress: item.progress,
+    progressColor: item.progressColor,
+  });
+}
+
+function renderResourceMetric(item: {
+  label: string;
+  value: string;
+  sub: string;
+  progress: number;
+  progressColor: string;
+  level?: StatusTone;
+}): string {
+  return renderKpiTile({
+    label: item.label,
+    value: item.value,
+    sub: item.sub,
+    level: item.level,
+    progress: item.progress,
+    progressColor: item.progressColor,
+  });
+}
+
+function renderRiskMetric(item: RiskMetric): string {
   return renderKpiTile({
     label: item.label,
     value: item.value,
@@ -712,6 +923,77 @@ function renderDependencyRow(item: CropDependencyRow): string[] {
     item.fallback,
     `<span class="dep-impact dep-impact--${item.level.toLowerCase()}">${item.impact}</span>`,
   ];
+}
+
+function renderFailureReallocColumn(column: FailureReallocColumn): string {
+  return `
+    <div class="failure-realloc-col">
+      <p class="failure-realloc-col__title">${column.title}</p>
+      <div class="failure-realloc-col__rows">
+        ${column.rows
+          .map(
+            (row) => `
+              <div class="failure-realloc-row">
+                <span class="failure-realloc-row__label">${row.label}</span>
+                <span class="failure-realloc-row__value ${row.level ? `status-${row.level.toLowerCase()}` : ""}">${row.value}</span>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderEmergencyEntry(item: EmergencyEntry, isExpanded: boolean): string {
+  return `
+    <div class="risk-emergency risk-emergency--${item.type}">
+      <button
+        type="button"
+        class="risk-emergency__toggle"
+        data-emergency-toggle="${item.id}"
+      >
+        <div class="risk-emergency__head">
+          <span class="risk-emergency__icon">${item.icon}</span>
+          <div class="risk-emergency__copy">
+            <p class="risk-emergency__message">${item.message}</p>
+            <p class="risk-emergency__meta">${item.meta}</p>
+          </div>
+        </div>
+      </button>
+      ${
+        isExpanded && item.responsePlan
+          ? `
+            <div class="risk-emergency__plan mono">
+              ${item.responsePlan.map((step) => `<div>${step}</div>`).join("")}
+            </div>
+          `
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderKeyValueRow(label: string, value: string, level?: StatusTone): string {
+  return `
+    <div class="scenario-kv">
+      <span class="scenario-kv__label">${label}</span>
+      <span class="scenario-kv__value ${level ? `status-${level.toLowerCase()}` : ""}">${value}</span>
+    </div>
+  `;
+}
+
+function renderFailureImpactColumn(column: FailureImpactColumn): string {
+  return `
+    <div class="failure-impact-col">
+      <p class="failure-impact-col__title">${column.title}</p>
+      <div class="failure-impact-col__body">
+        ${column.rows
+          .map((row) => renderKeyValueRow(row.label, row.value, row.level))
+          .join("")}
+      </div>
+    </div>
+  `;
 }
 
 function renderOverviewEnvTile(item: EnvParam): string {
@@ -874,3 +1156,7 @@ function getNoticeLevel(level: StatusTone): "ok" | "warn" | "crit" {
       return "warn";
   }
 }
+
+void renderRiskLegacy;
+void renderEnvKpi;
+void renderCropCard;

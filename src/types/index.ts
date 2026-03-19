@@ -175,6 +175,65 @@ export interface CropDependencyRow {
   level: StatusTone;
 }
 
+export interface ResourceMetric {
+  id: string;
+  label: string;
+  value: string;
+  sub: string;
+  progress: number;
+  progressColor: string;
+  level?: StatusTone;
+}
+
+export interface FailureReallocColumn {
+  id: string;
+  title: string;
+  rows: Array<{
+    label: string;
+    value: string;
+    level?: StatusTone;
+  }>;
+}
+
+export interface RiskMetric {
+  id: string;
+  label: string;
+  value: string;
+  sub: string;
+  progress: number;
+  progressColor: string;
+  level?: StatusTone;
+}
+
+export interface EmergencyEntry {
+  id: string;
+  type: "act" | "wrn" | "inf";
+  icon: string;
+  message: string;
+  meta: string;
+  responsePlan?: string[];
+}
+
+export interface ScenarioSimulation {
+  id: string;
+  label: string;
+  tone: "default" | "danger";
+  level: StatusTone;
+  note: string;
+  before: Array<{ label: string; value: string }>;
+  after: Array<{ label: string; value: string; level?: StatusTone }>;
+}
+
+export interface FailureImpactColumn {
+  id: string;
+  title: string;
+  rows: Array<{
+    label: string;
+    value: string;
+    level?: StatusTone;
+  }>;
+}
+
 export interface TabDefinition {
   id: TabId;
   label: string;
@@ -233,6 +292,12 @@ export interface MissionDataBundle {
   cropMetrics: CropMetric[];
   cropStages: Record<string, CropStageNode[]>;
   cropDependencies: CropDependencyRow[];
+  resourceMetrics: ResourceMetric[];
+  failureRealloc: FailureReallocColumn[];
+  riskMetrics: RiskMetric[];
+  emergencyLog: EmergencyEntry[];
+  scenarioSimulations: ScenarioSimulation[];
+  failureImpact: FailureImpactColumn[];
   repoSignals: {
     panelCount: number;
     endpointCount: number;

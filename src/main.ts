@@ -1,10 +1,10 @@
 import "./style.css";
 import { renderApp } from "./app";
 
-const appRoot = document.querySelector<HTMLDivElement>("#app");
+const app = document.querySelector<HTMLDivElement>("#app");
 
-if (!appRoot) {
+if (!app) {
   throw new Error("App root element was not found.");
 }
 
-renderApp(appRoot);
+renderApp(app);

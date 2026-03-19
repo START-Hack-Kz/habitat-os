@@ -753,6 +753,10 @@ code,
   opacity: 0.7;
 }
 
+.resources-tab .ui-alloc.is-offline {
+  opacity: 0.3;
+}
+
 .ui-spark-card {
   display: flex;
   align-items: center;
@@ -819,10 +823,238 @@ code,
   gap: 12px;
 }
 
+.resources-tab,
+.resource-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.risk-tab,
+.risk-emergency-list,
+.scenario-sim {
+  display: grid;
+  gap: 12px;
+}
+
 .crop-kpi-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.resource-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.risk-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.resource-main-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.risk-main-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.resource-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.failure-realloc-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.failure-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.failure-realloc-col {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--chrome);
+  border-radius: 4px;
+  background: var(--bg-3);
+  padding: 12px;
+}
+
+.failure-realloc-col__title {
+  margin: 0;
+  color: var(--text-0);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.failure-realloc-col__rows {
+  display: grid;
+  gap: 8px;
+}
+
+.failure-realloc-row {
+  display: grid;
+  gap: 3px;
+}
+
+.failure-realloc-row__label {
+  color: var(--text-2);
+  font-family: var(--font-data);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.failure-realloc-row__value {
+  color: var(--text-1);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.risk-emergency {
+  border: 1px solid var(--chrome);
+  border-left: 2px solid var(--chrome-hi);
+  background: var(--bg-1);
+  border-radius: 4px;
+}
+
+.risk-emergency--act {
+  border-left-color: var(--abt);
+}
+
+.risk-emergency--wrn {
+  border-left-color: var(--cau);
+}
+
+.risk-emergency--inf {
+  border-left-color: var(--nom);
+}
+
+.risk-emergency__toggle {
+  width: 100%;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.risk-emergency__head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+}
+
+.risk-emergency__icon,
+.risk-emergency__meta,
+.scenario-sim__title,
+.scenario-kv__label {
+  font-family: var(--font-data);
+}
+
+.risk-emergency__icon {
+  color: var(--text-2);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+}
+
+.risk-emergency__message,
+.scenario-sim__note,
+.failure-impact-col__title {
+  margin: 0;
+  color: var(--text-0);
+}
+
+.risk-emergency__meta {
+  margin: 3px 0 0;
+  color: var(--text-2);
+  font-size: 8px;
+}
+
+.risk-emergency__plan {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid rgba(42, 49, 80, 0.8);
+  padding: 10px 12px 12px;
+  color: var(--text-2);
+  font-size: 9px;
+}
+
+.scenario-sim__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.scenario-sim__btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--chrome);
+  border-radius: 4px;
+  box-shadow: inset 0 1px 0 var(--glass-top);
+  color: var(--text-0);
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.scenario-sim__btn.is-active {
+  border-color: var(--aero-blue);
+  background: rgba(74, 127, 193, 0.14);
+  color: var(--aero-blue);
+}
+
+.scenario-sim__compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scenario-sim__panel,
+.failure-impact-col {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--chrome);
+  border-radius: 4px;
+  background: var(--bg-3);
+  padding: 12px;
+}
+
+.scenario-sim__title,
+.failure-impact-col__title {
+  font-size: 9px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.scenario-kv,
+.failure-impact-col__body {
+  display: grid;
+  gap: 8px;
+}
+
+.scenario-kv__label {
+  color: var(--text-2);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.scenario-kv__value {
+  color: var(--text-1);
+  font-size: 10px;
 }
 
 .crop-health-grid {
@@ -1661,8 +1893,20 @@ code,
 
   .crop-kpi-row,
   .crop-health-grid,
-  .crop-stage-gauges {
+  .crop-stage-gauges,
+  .resource-kpi-row,
+  .risk-kpi-row,
+  .failure-realloc-grid,
+  .failure-impact-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .resource-main-row {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-main-row {
+    grid-template-columns: 1fr;
   }
 
   .content-span-2 {
@@ -1749,7 +1993,12 @@ code,
   .crop-health-grid,
   .crop-stage-line,
   .crop-stage-gauges,
-  .crop-detail-row {
+  .crop-detail-row,
+  .resource-kpi-row,
+  .risk-kpi-row,
+  .failure-realloc-grid,
+  .failure-impact-grid,
+  .scenario-sim__compare {
     grid-template-columns: 1fr;
   }
 

@@ -10,7 +10,10 @@ import type {
   CropDependencyRow,
   CropMetric,
   CropStageNode,
+  EmergencyEntry,
   EnvParam,
+  FailureReallocColumn,
+  FailureImpactColumn,
   FragilityItem,
   FullAgentLogItem,
   GaugeItem,
@@ -22,7 +25,10 @@ import type {
   OverviewLogItem,
   PageContent,
   PageHero,
+  ResourceMetric,
+  RiskMetric,
   ScenarioCard,
+  ScenarioSimulation,
   StatusTone,
   TabDefinition,
   TimelineEvent,
@@ -433,6 +439,279 @@ const cropDependencies: CropDependencyRow[] = [
   },
 ];
 
+const resourceMetrics: ResourceMetric[] = [
+  {
+    id: "water-reserve",
+    label: "Water Reserve",
+    value: "71%",
+    sub: `${mission.resources.waterReservoirL} L live reserve`,
+    progress: 71,
+    progressColor: "var(--aero-blue)",
+  },
+  {
+    id: "energy-capacity",
+    label: "Energy Capacity",
+    value: "68%",
+    sub: `${mission.resources.energyAvailableKwh} kWh available`,
+    progress: 68,
+    progressColor: "var(--cau)",
+    level: "CAU",
+  },
+  {
+    id: "npk-reserve",
+    label: "NPK Reserve",
+    value: "22%",
+    sub: "Phosphorus is the current floor",
+    progress: 22,
+    progressColor: "var(--abt)",
+    level: "ABT",
+  },
+  {
+    id: "o2-balance",
+    label: "O2 Balance",
+    value: "+4.2%",
+    sub: "Canopy remains net positive",
+    progress: 54,
+    progressColor: "var(--nom)",
+  },
+];
+
+const failureRealloc: FailureReallocColumn[] = [
+  {
+    id: "failure-event",
+    title: "Failure Event",
+    rows: [
+      {
+        label: "Scenario",
+        value: "Water recycling decline",
+        level: "ABT",
+      },
+      {
+        label: "Description",
+        value: sanitizeText(mission.activeScenario?.description ?? "No active scenario."),
+      },
+      {
+        label: "Trigger",
+        value: "Filter degradation cut recycle efficiency to 60%",
+        level: "CAU",
+      },
+    ],
+  },
+  {
+    id: "realloc-actions",
+    title: "Reallocation Actions",
+    rows: [
+      {
+        label: "Water shift",
+        value: "Zone-A 20 -> 10, Zone-D 10 -> 5, Zone-B 40 -> 50, Zone-C 30 -> 35",
+        level: "CAU",
+      },
+      {
+        label: "Lighting trim",
+        value: "Zone-A PAR 200 -> 150 and photoperiod reduced to 14h",
+      },
+      {
+        label: "Override path",
+        value: "Manual override remains available before POST /agent/apply",
+      },
+    ],
+  },
+  {
+    id: "mission-impact",
+    title: "Mission Impact",
+    rows: [
+      {
+        label: "Calories",
+        value: "Coverage preserved near 76% instead of projected 41%",
+        level: "NOM",
+      },
+      {
+        label: "Tradeoff",
+        value: "Radish harvest delay plus lower folate/Vitamin K output",
+        level: "CAU",
+      },
+      {
+        label: "Days Safe",
+        value: "Extends crew nutrition runway by 14 days",
+        level: "NOM",
+      },
+    ],
+  },
+];
+
+const riskMetrics: RiskMetric[] = [
+  {
+    id: "risk-index",
+    label: "Risk Index",
+    value: "34/100",
+    sub: "Aggregate mission instability",
+    progress: 34,
+    progressColor: "var(--cau)",
+    level: "CAU",
+  },
+  {
+    id: "active-emergencies",
+    label: "Active Emergencies",
+    value: "2",
+    sub: "Critical + monitoring entries",
+    progress: 50,
+    progressColor: "var(--cau)",
+    level: "CAU",
+  },
+  {
+    id: "impact-24h",
+    label: "24h Impact",
+    value: "LOW",
+    sub: "Containment plan holding",
+    progress: 26,
+    progressColor: "var(--aero-blue)",
+  },
+  {
+    id: "next-review",
+    label: "Next Review",
+    value: "SOL 130",
+    sub: "Escalation checkpoint",
+    progress: 70,
+    progressColor: "var(--mars-orange)",
+    level: "CAU",
+  },
+];
+
+const emergencyLog: EmergencyEntry[] = [
+  {
+    id: "emg-1",
+    type: "act",
+    icon: "ACTIVE",
+    message: "Radish germination failure in Zone-C confirmed. Moisture variance remains under investigation.",
+    meta: "SOL 087 | escalation open",
+    responsePlan: [
+      "1. isolate feed line delta",
+      "2. hold irrigation override",
+      "3. compare canopy response against baseline",
+    ],
+  },
+  {
+    id: "emg-2",
+    type: "wrn",
+    icon: "MON",
+    message: "Zone-B moisture recovered after allocation shift, but reservoir pressure remains unstable.",
+    meta: "SOL 087 | monitoring",
+    responsePlan: [
+      "1. maintain reduced load",
+      "2. verify recycler output every 4h",
+      "3. alert if pressure falls below floor",
+    ],
+  },
+  {
+    id: "emg-3",
+    type: "inf",
+    icon: "RES",
+    message: "LED bus surge cleared after staged restart. No further canopy drift detected.",
+    meta: "SOL 086 | resolved",
+  },
+];
+
+const scenarioSimulations: ScenarioSimulation[] = [
+  {
+    id: "dust",
+    label: "Dust Storm",
+    tone: "default",
+    level: "CAU",
+    note: "Simulates reduced solar input and HVAC drag.",
+    before: [
+      { label: "Power margin", value: "68%" },
+      { label: "PAR stability", value: "Nominal" },
+      { label: "Cooling load", value: "Stable" },
+    ],
+    after: [
+      { label: "Power margin", value: "52%", level: "CAU" },
+      { label: "PAR stability", value: "Compressed", level: "CAU" },
+      { label: "Cooling load", value: "Elevated", level: "CAU" },
+    ],
+  },
+  {
+    id: "water",
+    label: "Water -50%",
+    tone: "default",
+    level: "CAU",
+    note: "Replays the recycler-loss path described in the active scenario example.",
+    before: [
+      { label: "Reservoir runway", value: "30 days" },
+      { label: "Crop allocation", value: "20/40/30/10" },
+      { label: "Days safe", value: "38" },
+    ],
+    after: [
+      { label: "Reservoir runway", value: "12 days", level: "ABT" },
+      { label: "Crop allocation", value: "10/50/35/5", level: "CAU" },
+      { label: "Days safe", value: "52", level: "NOM" },
+    ],
+  },
+  {
+    id: "power",
+    label: "Power Failure",
+    tone: "default",
+    level: "CAU",
+    note: "Cuts lighting surplus and forces staged load balancing.",
+    before: [
+      { label: "LED capacity", value: "74%" },
+      { label: "Pump sync", value: "Parallel" },
+      { label: "Sensor rail", value: "Nominal" },
+    ],
+    after: [
+      { label: "LED capacity", value: "48%", level: "CAU" },
+      { label: "Pump sync", value: "Staggered", level: "CAU" },
+      { label: "Sensor rail", value: "Protected", level: "NOM" },
+    ],
+  },
+  {
+    id: "cascade",
+    label: "Cascade Failure",
+    tone: "danger",
+    level: "ABT",
+    note: "Compounds water, power, and canopy instability across the greenhouse.",
+    before: [
+      { label: "Mission risk", value: "34/100" },
+      { label: "Emergency count", value: "2" },
+      { label: "Crew nutrition", value: "74 score" },
+    ],
+    after: [
+      { label: "Mission risk", value: "83/100", level: "ABT" },
+      { label: "Emergency count", value: "5", level: "ABT" },
+      { label: "Crew nutrition", value: "58 score", level: "ABT" },
+    ],
+  },
+];
+
+const failureImpact: FailureImpactColumn[] = [
+  {
+    id: "impact-immediate",
+    title: "Immediate (0-7 sols)",
+    rows: [
+      { label: "Moisture", value: "Zone-C stays under watch", level: "CAU" },
+      { label: "Water", value: "Recycler remains limiting utility", level: "ABT" },
+      { label: "Ops", value: "Manual override window stays open" },
+    ],
+  },
+  {
+    id: "impact-short",
+    title: "Short-term (8-30 sols)",
+    rows: [
+      { label: "Calories", value: "Potato allocation preserved", level: "NOM" },
+      { label: "Micronutrients", value: "Radish + lettuce drift likely", level: "CAU" },
+      { label: "Review", value: "SOL 130 checkpoint scheduled" },
+    ],
+  },
+  {
+    id: "impact-protocol",
+    title: "AI Response Protocol",
+    rows: [
+      { label: "Analyze", value: "POST /agent/analyze required before apply" },
+      { label: "Apply", value: "Operator confirms selected actions only" },
+      { label: "Reset", value: "Simulation reset remains final rollback" },
+    ],
+  },
+];
+
 const timeline: TimelineEvent[] = [
   ...mission.eventLog.map((event) => ({
     id: event.eventId,
@@ -652,6 +931,12 @@ export const missionData: MissionDataBundle = {
   cropMetrics,
   cropStages,
   cropDependencies,
+  resourceMetrics,
+  failureRealloc,
+  riskMetrics,
+  emergencyLog,
+  scenarioSimulations,
+  failureImpact,
   repoSignals: {
     panelCount,
     endpointCount,
@@ -666,8 +951,11 @@ export { cropMetrics };
 export { cropStages };
 export { energyGauges };
 export { envParams };
+export { failureRealloc };
 export { fragility };
 export { fullAgentLog };
+export { failureImpact };
+export { emergencyLog };
 export const overviewGridCells = missionData.ghCells;
 export const { overviewAlert } = missionData;
 export { overviewLog };
@@ -678,9 +966,12 @@ export { nutrients };
 export { overviewMetrics };
 export const pageContentByTab = missionData.pageContent;
 export const missionHero = missionData.pageHero;
+export { resourceMetrics };
+export { riskMetrics };
 export const { repoSignals } = missionData;
 export const { riskAlert } = missionData;
 export { riskGauges };
+export { scenarioSimulations };
 export { scenarios };
 export const missionTabs = missionData.tabs;
 export { timeline };
@@ -846,3 +1137,4 @@ function formatIsoStamp(value: string): string {
 }
 
 void mvpScopeRaw;
+void ghCells;
