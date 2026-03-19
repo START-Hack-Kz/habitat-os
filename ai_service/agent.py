@@ -27,7 +27,7 @@ from tools import (
 
 def _get_model_limits() -> tuple[int, float]:
     """Read shared generation settings from env."""
-    max_tokens = int(os.getenv("AI_MAX_TOKENS", "1200"))
+    max_tokens = int(os.getenv("AI_MAX_TOKENS", "2400"))
     temperature = float(os.getenv("AI_TEMPERATURE", "0.2"))
     return max_tokens, temperature
 
@@ -79,6 +79,7 @@ _TOOLS = [getMissionState, getRecentMissionLog, runPlannerAnalysis,
           getScenarioCatalog, locateDashboardSection, searchKnowledgeBase]
 
 _RISK_LEVELS = {"low", "moderate", "high", "critical"}
+_RISK_RANK = {"low": 0, "moderate": 1, "high": 2, "critical": 3}
 
 _SYSTEM_PROMPT = """You are the Mars Greenhouse Mission Control AI assistant.
 
@@ -113,44 +114,23 @@ def _make_agent() -> Agent:
 _ANALYZE_PROMPT = """Analyze the current Mars Greenhouse mission state.
 
 Steps:
-1. Call getMissionState() to get current state
-2. Call runPlannerAnalysis() to get planner recommendations
-3. Produce a JSON object matching this exact schema:
+1. Call getMissionState()
+2. Call runPlannerAnalysis()
+3. Return ONLY this compact JSON object:
 
 {{
-  "decisionId": "<string>",
-  "missionDay": <int>,
-  "timestamp": "<ISO datetime>",
   "riskLevel": "low" | "moderate" | "high" | "critical",
-  "riskSummary": "<1-2 sentences: what is at risk and why>",
-  "criticalNutrientDependencies": ["<string>", ...],
-  "nutritionPreservationMode": <bool>,
-  "recommendedActions": [
-    {{
-      "actionId": "<string>",
-      "actionType": "<ActionType>",
-      "urgency": "immediate" | "within_24h" | "strategic",
-      "targetZoneId": "<string or null>",
-      "description": "<human-readable description>",
-      "parameterChanges": {{}},
-      "nutritionImpact": "<string>",
-      "tradeoff": "<string>"
-    }}
-  ],
-  "comparison": {{
-    "before": {{"caloricCoveragePercent": <n>, "proteinCoveragePercent": <n>, "nutritionalCoverageScore": <n>, "daysSafe": <n>}},
-    "after": {{"caloricCoveragePercent": <n>, "proteinCoveragePercent": <n>, "nutritionalCoverageScore": <n>, "daysSafe": <n>}},
-    "delta": {{"caloricCoverageDelta": <n>, "proteinCoverageDelta": <n>, "scoreDelta": <n>, "daysSafeDelta": <n>}},
-    "summary": "<string>"
-  }},
-  "explanation": "<2-4 sentences a judge can read in 10 seconds>",
-  "triggeredByScenario": "<scenarioId or null>",
-  "kbContextUsed": <bool>
+  "riskSummary": "<1-2 sentences grounded in the current mission state>",
+  "criticalNutrientDependencies": ["<short factual dependency>", "..."],
+  "explanation": "<2-4 short sentences explaining the emergency and why the planner response matters>"
 }}
 
-CRITICAL: Use ONLY values from getMissionState() and runPlannerAnalysis() outputs.
-Do NOT invent sensor readings, nutrition numbers, or zone values.
-Return ONLY the JSON object, no markdown, no extra text.
+Rules:
+- Ground every statement in getMissionState() and runPlannerAnalysis()
+- Do not invent sensor values, nutrition values, planner actions, or before/after numbers
+- Do not restate the full tool payload
+- Keep the output concise and operational
+- Return ONLY JSON, no markdown
 """
 
 
@@ -299,6 +279,7 @@ def _overlay_llm_fields(
     *,
     base: AIDecision,
     llm_data: dict,
+    preserve_emergency_narrative: bool = False,
 ) -> AIDecision:
     """
     Merge LLM-authored narrative fields onto the deterministic base decision.
@@ -327,9 +308,15 @@ def _overlay_llm_fields(
       payload["timestamp"] = llm_data["timestamp"].strip()
 
     if isinstance(llm_data.get("riskLevel"), str) and llm_data["riskLevel"] in _RISK_LEVELS:
-      payload["riskLevel"] = llm_data["riskLevel"]
+      llm_risk = llm_data["riskLevel"]
+      if _RISK_RANK[llm_risk] >= _RISK_RANK[base.riskLevel]:
+        payload["riskLevel"] = llm_risk
 
-    if isinstance(llm_data.get("riskSummary"), str) and llm_data["riskSummary"].strip():
+    if (
+      not preserve_emergency_narrative
+      and isinstance(llm_data.get("riskSummary"), str)
+      and llm_data["riskSummary"].strip()
+    ):
       payload["riskSummary"] = llm_data["riskSummary"].strip()
 
     dependencies = llm_data.get("criticalNutrientDependencies")
@@ -338,7 +325,11 @@ def _overlay_llm_fields(
       if normalized_dependencies:
         payload["criticalNutrientDependencies"] = normalized_dependencies
 
-    if isinstance(llm_data.get("explanation"), str) and llm_data["explanation"].strip():
+    if (
+      not preserve_emergency_narrative
+      and isinstance(llm_data.get("explanation"), str)
+      and llm_data["explanation"].strip()
+    ):
       payload["explanation"] = llm_data["explanation"].strip()
 
     payload["kbContextUsed"] = True
@@ -372,7 +363,16 @@ def analyze(request: AnalyzeRequest) -> AIDecision:
         # Strands returns an AgentResult; get the text content
         response_text = str(result)
         data = _extract_json(response_text)
-        return _overlay_llm_fields(base=fallback_decision, llm_data=data)
+        preserve_emergency_narrative = (
+            mission.status != "nominal"
+            or mission.activeScenario is not None
+            or fallback_decision.riskLevel in {"high", "critical"}
+        )
+        return _overlay_llm_fields(
+            base=fallback_decision,
+            llm_data=data,
+            preserve_emergency_narrative=preserve_emergency_narrative,
+        )
     except Exception as e:
         # Fallback: deterministic analysis from tool outputs
         print(f"[agent] LLM unavailable ({type(e).__name__}: {e}), using deterministic fallback")

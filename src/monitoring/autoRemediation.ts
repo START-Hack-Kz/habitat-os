@@ -233,10 +233,13 @@ export function createAutoRemediationPlan(
       .filter((action) => action.autoTriggered || action.advisoryOnly)
       .map((action) => action.actionType),
   );
-  const tweakRequest = buildTweakRequest(
-    mission,
-    prioritizedActions.filter((action) => autoActions.includes(action.actionType)),
-  );
+  const scenarioLocked = Boolean(mission.activeScenario);
+  const tweakRequest = scenarioLocked
+    ? null
+    : buildTweakRequest(
+        mission,
+        prioritizedActions.filter((action) => autoActions.includes(action.actionType)),
+      );
   const machineryLabel = unique(
     (autoActions.length > 0 ? autoActions : visibleActionTypes).map(buildMachineryLabel),
   ).join(" + ");
@@ -250,11 +253,15 @@ export function createAutoRemediationPlan(
     executingMessage:
       tweakRequest !== null
         ? `${machineryLabel} for ${primaryAction.targetLabel}. Writing corrected operating values back to the simulation.`
-        : `${machineryLabel} for ${primaryAction.targetLabel}. Crew review is still required before the issue can be cleared.`,
+        : scenarioLocked
+          ? `${machineryLabel} for ${primaryAction.targetLabel}. Active scenario remains authoritative, so values stay degraded until the incident is cleared or resources are replanned.`
+          : `${machineryLabel} for ${primaryAction.targetLabel}. Crew review is still required before the issue can be cleared.`,
     resolvedMessage:
       tweakRequest !== null
         ? `${primaryAction.targetLabel} has been pushed back toward the nominal operating band.`
-        : `${primaryAction.targetLabel} remains under watch.`,
+        : scenarioLocked
+          ? `${primaryAction.targetLabel} remains degraded under the active scenario watch.`
+          : `${primaryAction.targetLabel} remains under watch.`,
     attentionMessage: `${primaryAction.targetLabel} still requires operator attention after the abstract response.`,
     machineryLabel,
     targetLabel: primaryAction.targetLabel,

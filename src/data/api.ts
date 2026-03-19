@@ -1,6 +1,8 @@
 import type {
   BackendAgentAction,
   BackendAgentAnalysis,
+  BackendAgentAnalyzeFocus,
+  BackendAgentChatResponse,
   BackendMissionState,
   BackendPlannerOutput,
   BackendScenarioCatalogItem,
@@ -41,13 +43,33 @@ function readApiBaseOverride(): string | undefined {
 
 const API_BASE = (readApiBaseOverride() ?? "http://127.0.0.1:3001").replace(/\/$/, "");
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+function readAiBaseOverride(): string | undefined {
+  const viteOverride = (import.meta as ImportMeta & { env?: ImportMetaEnv }).env?.VITE_AI_BASE_URL;
+
+  if (viteOverride) {
+    return viteOverride;
+  }
+
+  const runtimeProcess = globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  };
+
+  return runtimeProcess.process?.env?.VITE_AI_BASE_URL;
+}
+
+const AI_BASE = (readAiBaseOverride() ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+
+async function requestJsonAtBase<T>(
+  baseUrl: string,
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   if (init?.body !== undefined && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     headers,
     ...init,
   });
@@ -58,6 +80,14 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJsonAtBase<T>(API_BASE, path, init);
+}
+
+async function requestAiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJsonAtBase<T>(AI_BASE, path, init);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -402,10 +432,26 @@ async function fetchCanonicalPlannerOutput(): Promise<PlannerOutput> {
   });
 }
 
-async function fetchCanonicalAgentDecision(): Promise<AIDecision> {
-  return requestJson<AIDecision>("/api/agent/analyze", {
+async function fetchCanonicalAgentDecision(
+  focus: BackendAgentAnalyzeFocus = "mission_overview",
+): Promise<AIDecision> {
+  try {
+    return await requestAiJson<AIDecision>("/ai/analyze", {
+      method: "POST",
+      body: JSON.stringify({ focus }),
+    });
+  } catch {
+    return requestJson<AIDecision>("/api/agent/analyze", {
+      method: "POST",
+      body: JSON.stringify({ focus }),
+    });
+  }
+}
+
+async function fetchCanonicalAgentChat(question: string): Promise<BackendAgentChatResponse> {
+  return requestAiJson<BackendAgentChatResponse>("/ai/chat", {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ question }),
   });
 }
 
@@ -438,9 +484,15 @@ export async function fetchPlannerAnalysis(): Promise<BackendPlannerOutput> {
   };
 }
 
-export async function fetchAgentAnalysis(): Promise<BackendAgentAnalysis> {
-  const decision = await fetchCanonicalAgentDecision();
+export async function fetchAgentAnalysis(
+  focus: BackendAgentAnalyzeFocus = "mission_overview",
+): Promise<BackendAgentAnalysis> {
+  const decision = await fetchCanonicalAgentDecision(focus);
   return mapAgentAnalysis(decision);
+}
+
+export async function fetchAgentChat(question: string): Promise<BackendAgentChatResponse> {
+  return fetchCanonicalAgentChat(question);
 }
 
 export async function injectScenario(

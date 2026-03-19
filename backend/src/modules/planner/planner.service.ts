@@ -68,6 +68,20 @@ function shouldEnterNutritionPreservationMode(state: MissionState): boolean {
     return true;
   }
 
+  if (
+    state.activeScenario &&
+    (
+      state.activeScenario.severity === "critical" ||
+      (
+        (state.activeScenario.scenarioType === "water_recycling_decline" ||
+          state.activeScenario.scenarioType === "energy_budget_reduction") &&
+        state.activeScenario.severity === "moderate"
+      )
+    )
+  ) {
+    return true;
+  }
+
   return (
     state.nutrition.nutritionalCoverageScore < NUTRITION_PRESERVATION_SCORE_THRESHOLD ||
     state.nutrition.daysSafe < NUTRITION_PRESERVATION_DAYS_THRESHOLD

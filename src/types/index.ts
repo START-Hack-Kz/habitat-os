@@ -617,6 +617,22 @@ export interface BackendAgentAnalysis {
   implementationStatus: "stub";
 }
 
+export type BackendAgentAnalyzeFocus =
+  | "mission_overview"
+  | "nutrition_risk"
+  | "scenario_response";
+
+export type BackendAgentChatConfidence = "high" | "medium" | "low";
+
+export interface BackendAgentChatResponse {
+  answer: string;
+  relevantSection: string | null;
+  supportingFacts: string[];
+  suggestedActions: string[];
+  followUpQuestions: string[];
+  confidence: BackendAgentChatConfidence;
+}
+
 export interface BackendScenarioInjectRequest {
   scenarioType: BackendScenarioType;
   severity?: BackendScenarioSeverity;

@@ -987,6 +987,14 @@ code,
   gap: 14px;
 }
 
+.agent-uplink__header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .agent-uplink__header {
   position: relative;
   z-index: 1;
@@ -1234,6 +1242,141 @@ code,
 .agent-log-shell__body {
   display: grid;
   align-content: start;
+}
+
+.agent-log-shell__stack,
+.agent-incident-log,
+.agent-incident-card,
+.agent-incident-spotlight,
+.agent-incident-chat-facts {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-incident-spotlight,
+.agent-incident-card,
+.agent-incident-chat-facts {
+  padding: 14px;
+  border: 1px solid rgba(96, 49, 49, 0.72);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(184, 50, 50, 0.06), transparent 70%),
+    rgba(13, 17, 27, 0.88);
+}
+
+.agent-incident-spotlight--low,
+.agent-incident-card--low {
+  border-color: rgba(58, 125, 68, 0.6);
+  background:
+    linear-gradient(180deg, rgba(58, 125, 68, 0.06), transparent 70%),
+    rgba(13, 17, 27, 0.88);
+}
+
+.agent-incident-spotlight--moderate,
+.agent-incident-card--moderate {
+  border-color: rgba(158, 122, 40, 0.62);
+}
+
+.agent-incident-spotlight--high,
+.agent-incident-card--high,
+.agent-incident-spotlight--critical,
+.agent-incident-card--critical {
+  border-color: rgba(184, 50, 50, 0.78);
+}
+
+.agent-incident-spotlight__head,
+.agent-incident-card__head,
+.agent-incident-chat-facts__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-incident-spotlight__kicker,
+.agent-incident-card__index,
+.agent-incident-chat-facts__kicker,
+.agent-incident-card__section-title,
+.agent-incident-spotlight__label,
+.agent-incident-card__label {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.agent-incident-spotlight__title,
+.agent-incident-card__title,
+.agent-incident-chat-facts__title {
+  margin: 4px 0 0;
+  color: var(--text-0);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.agent-incident-spotlight__badges,
+.agent-incident-card__badges,
+.agent-incident-spotlight__actions,
+.agent-incident-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.agent-incident-spotlight__grid,
+.agent-incident-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agent-incident-spotlight__cell,
+.agent-incident-card__cell {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(61, 72, 112, 0.72);
+  border-radius: 12px;
+  background: rgba(18, 23, 36, 0.86);
+  color: var(--text-1);
+  font-size: 10px;
+}
+
+.agent-incident-spotlight__body,
+.agent-incident-card__body,
+.agent-incident-chat-facts__body,
+.agent-incident-chat-facts__fact {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.agent-incident-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--text-2);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-incident-card__section {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-incident-chat-facts__fact-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-incident-chat-facts__fact {
+  padding-left: 12px;
+  border-left: 1px solid rgba(74, 127, 193, 0.42);
 }
 
 .agent-uplink__composer {
@@ -2784,6 +2927,20 @@ code,
   border: 1px solid rgba(42, 49, 80, 0.8);
   background: var(--bg-2);
   padding: 8px;
+}
+
+.zone-sensor--cau {
+  border-color: rgba(158, 122, 40, 0.72);
+  background:
+    linear-gradient(180deg, rgba(158, 122, 40, 0.08), transparent 70%),
+    var(--bg-2);
+}
+
+.zone-sensor--abt {
+  border-color: rgba(184, 50, 50, 0.78);
+  background:
+    linear-gradient(180deg, rgba(184, 50, 50, 0.1), transparent 70%),
+    var(--bg-2);
 }
 
 .zone-sensor__value {
