@@ -350,3 +350,163 @@ export interface MissionDataBundle {
     scenarioTypeCount: number;
   };
 }
+
+export type BackendMissionStatus =
+  | "nominal"
+  | "warning"
+  | "critical"
+  | "nutrition_preservation_mode";
+
+export type BackendCropType = "lettuce" | "potato" | "beans" | "radish";
+export type BackendZoneStatus =
+  | "healthy"
+  | "stressed"
+  | "critical"
+  | "harvesting"
+  | "offline";
+export type BackendStressType =
+  | "none"
+  | "water_stress"
+  | "temperature_drift"
+  | "nutrient_imbalance"
+  | "energy_pressure";
+export type BackendStressSeverity =
+  | "none"
+  | "low"
+  | "moderate"
+  | "high"
+  | "critical";
+export type BackendScenarioType =
+  | "water_recycling_decline"
+  | "energy_budget_reduction"
+  | "temperature_control_failure";
+export type BackendScenarioSeverity = "mild" | "moderate" | "critical";
+export type BackendEventLevel = "info" | "warning" | "critical";
+export type BackendNutrientMixStatus = "balanced" | "watch" | "critical";
+export type BackendNutritionTrend = "improving" | "stable" | "declining";
+export type BackendPlannerMode = "normal" | "nutrition_preservation";
+export type BackendPlannerActionType =
+  | "reallocate_water"
+  | "reduce_lighting"
+  | "adjust_temperature"
+  | "flag_zone_offline";
+
+export interface BackendZoneStress {
+  active: boolean;
+  type: BackendStressType;
+  severity: BackendStressSeverity;
+  summary: string;
+}
+
+export interface BackendCropZone {
+  zoneId: string;
+  name: string;
+  cropType: BackendCropType;
+  areaM2: number;
+  growthDay: number;
+  growthCycleDays: number;
+  growthProgressPercent: number;
+  projectedYieldKg: number;
+  allocationPercent: number;
+  status: BackendZoneStatus;
+  stress: BackendZoneStress;
+}
+
+export interface BackendResourceState {
+  waterReservoirL: number;
+  waterRecyclingEfficiencyPercent: number;
+  waterDailyConsumptionL: number;
+  nutrientSolutionLevelPercent: number;
+  nutrientMixStatus: BackendNutrientMixStatus;
+  energyAvailableKwh: number;
+  energyDailyConsumptionKwh: number;
+  energyReserveHours: number;
+}
+
+export interface BackendNutritionStatus {
+  dailyCaloriesProduced: number;
+  dailyCaloriesTarget: number;
+  caloricCoveragePercent: number;
+  dailyProteinProducedG: number;
+  dailyProteinTargetG: number;
+  proteinCoveragePercent: number;
+  micronutrientAdequacyPercent: number;
+  nutritionalCoverageScore: number;
+  daysSafe: number;
+  trend: BackendNutritionTrend;
+}
+
+export interface BackendFailureScenario {
+  scenarioId: string;
+  type: BackendScenarioType;
+  severity: BackendScenarioSeverity;
+  title: string;
+  description: string;
+  injectedAt: string;
+  affectedZoneIds: string[];
+  parameterOverrides: Record<string, number>;
+}
+
+export interface BackendEventLogEntry {
+  eventId: string;
+  timestamp: string;
+  missionDay: number;
+  level: BackendEventLevel;
+  message: string;
+  zoneId?: string;
+}
+
+export interface BackendMissionState {
+  missionId: string;
+  missionDay: number;
+  missionDurationDays: number;
+  crewSize: number;
+  status: BackendMissionStatus;
+  zones: BackendCropZone[];
+  resources: BackendResourceState;
+  nutrition: BackendNutritionStatus;
+  activeScenario: BackendFailureScenario | null;
+  eventLog: BackendEventLogEntry[];
+  lastUpdated: string;
+}
+
+export interface BackendScenarioSeverityOption {
+  severity: BackendScenarioSeverity;
+  label: string;
+  effectSummary: string;
+  parameterOverrides: Record<string, number>;
+}
+
+export interface BackendScenarioCatalogItem {
+  scenarioType: BackendScenarioType;
+  label: string;
+  description: string;
+  affectedResources: string[];
+  nutritionRisk: string;
+  severities: BackendScenarioSeverityOption[];
+}
+
+export interface BackendPlannerAction {
+  type: BackendPlannerActionType;
+  targetZoneId?: string;
+  description: string;
+  reason: string;
+}
+
+export interface BackendNutritionForecast {
+  before: BackendNutritionStatus;
+  after: BackendNutritionStatus;
+}
+
+export interface BackendPlannerOutput {
+  mode: BackendPlannerMode;
+  recommendedActions: BackendPlannerAction[];
+  nutritionForecast: BackendNutritionForecast;
+  explanation: string;
+}
+
+export interface BackendScenarioInjectRequest {
+  scenarioType: BackendScenarioType;
+  severity?: BackendScenarioSeverity;
+  affectedZoneIds?: string[];
+}

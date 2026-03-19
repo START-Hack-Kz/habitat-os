@@ -1741,6 +1741,68 @@ code,
   gap: 8px;
 }
 
+.backend-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.backend-scenario-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--chrome);
+  border-radius: 4px;
+  background: var(--bg-1);
+  padding: 12px;
+}
+
+.backend-scenario-card.is-selected {
+  border-color: var(--chrome-hi);
+}
+
+.backend-scenario-card.is-active {
+  border-color: var(--aero-blue);
+  box-shadow: inset 0 0 0 1px rgba(74, 127, 193, 0.22);
+}
+
+.backend-scenario-card__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.backend-scenario-card__title,
+.backend-scenario-card__body {
+  margin: 0;
+  color: var(--text-0);
+}
+
+.backend-scenario-card__title {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.backend-scenario-card__meta {
+  margin: 4px 0 0;
+  color: var(--text-2);
+  font-family: var(--font-data);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.backend-scenario-card__body {
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.backend-scenario-card__severity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .overview-twin__legend {
   display: flex;
   flex-wrap: wrap;
@@ -2322,6 +2384,17 @@ code,
   text-align: center;
   border-color: var(--chrome);
   color: var(--text-1);
+  cursor: pointer;
+}
+
+.gh-cell.is-selected {
+  border-color: var(--aero-blue);
+  box-shadow: inset 0 0 0 1px rgba(74, 127, 193, 0.28);
+}
+
+.gh-cell.cell-offline {
+  opacity: 0.55;
+  border-style: dashed;
 }
 
 .gh-cell__slot {
@@ -2434,6 +2507,7 @@ code,
   .resource-kpi-row,
   .risk-kpi-row,
   .agent-kpi-row,
+  .backend-scenario-grid,
   .failure-realloc-grid,
   .failure-impact-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2553,6 +2627,7 @@ code,
   .resource-kpi-row,
   .risk-kpi-row,
   .agent-kpi-row,
+  .backend-scenario-grid,
   .failure-realloc-grid,
   .failure-impact-grid,
   .scenario-sim__compare {
