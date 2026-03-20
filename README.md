@@ -1,6 +1,6 @@
-# Habitat OS
+# AETHER
 
-Habitat OS is a full operational system for a Mars greenhouse.
+AETHER is a full operational system for a Mars greenhouse.
 
 It combines:
 
@@ -14,7 +14,7 @@ The system is designed to simulate how a Mars greenhouse would actually be opera
 
 ## What The Project Does
 
-Habitat OS models a four-zone controlled-environment greenhouse on Mars:
+AETHER models a four-zone controlled-environment greenhouse on Mars:
 
 - Zone A: lettuce
 - Zone B: potato
