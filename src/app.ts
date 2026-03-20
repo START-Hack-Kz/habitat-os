@@ -18,7 +18,6 @@ import { buildHabitatOperationsModel, type HabitatOperationsModel } from "./data
 import { getZoneCompositionProfile } from "./data/zoneComposition";
 import type {
   AlertLevel,
-  BackendAgentAction,
   BackendAgentAnalysis,
   BackendAgentChatConfidence,
   BackendAgentChatResponse,
@@ -996,8 +995,8 @@ function renderPage(state: AppState): string {
 function renderOverview(
   mission: BackendMissionState,
   planner: BackendPlannerOutput | null,
-  agent: BackendAgentAnalysis | null,
-  agentAnalyzing: boolean,
+  _agent: BackendAgentAnalysis | null,
+  _agentAnalyzing: boolean,
   selectedHabitatId: string,
   overviewHabitatCollapsed: boolean,
 ): string {
@@ -1037,7 +1036,7 @@ function renderOverview(
         })}
       </div>
 
-      <div class="overview-support-row overview-support-row--triple">
+      <div class="overview-support-row overview-support-row--double">
         ${renderPanel({
           title: "Resource Snapshot",
           dotColor: "var(--mars-orange)",
@@ -1080,12 +1079,6 @@ function renderOverview(
               </div>
             </div>
           `,
-        })}
-
-        ${renderPanel({
-          title: "Incident / Planner",
-          dotColor: "var(--cau)",
-          children: renderIncidentPanel(mission, planner, agent, agentAnalyzing),
         })}
       </div>
 
@@ -3578,172 +3571,6 @@ function renderResourceTile(tile: OverviewResourceTileData): string {
   `;
 }
 
-function renderIncidentPanel(
-  mission: BackendMissionState,
-  planner: BackendPlannerOutput | null,
-  agent: BackendAgentAnalysis | null,
-  agentAnalyzing: boolean,
-): string {
-  const primaryChange = planner?.changes[0];
-  const primaryFlag = planner?.stressFlags[0];
-  const incidentLabel = mission.activeScenario
-    ? `${mission.activeScenario.title} · ${formatScenarioSeverity(mission.activeScenario.severity)}`
-    : "No active scenario";
-  const incidentTone = mission.activeScenario
-    ? severityTone(mission.activeScenario.severity)
-    : missionTone(mission);
-
-  return `
-    <div class="incident-panel">
-      <div class="incident-panel__row">
-        <span class="incident-panel__label">Incident</span>
-        <span class="incident-panel__value">${renderStatusBadge(incidentLabel, incidentTone)}</span>
-      </div>
-      <div class="incident-panel__row">
-        <span class="incident-panel__label">Planner</span>
-        <span class="incident-panel__value">${renderStatusBadge(
-          planner ? formatPlannerMode(planner.mode) : "offline",
-          planner?.mode === "nutrition_preservation" ? "CAU" : "NOM",
-        )}</span>
-      </div>
-      <div class="incident-panel__row">
-        <span class="incident-panel__label">Projected changes</span>
-        <span class="incident-panel__value mono">${planner?.changes.length ?? 0}</span>
-      </div>
-      <div class="incident-panel__row">
-        <span class="incident-panel__label">AETHER</span>
-        <span class="incident-panel__value">${renderStatusBadge(
-          agent ? formatRiskLevel(agent.riskLevel) : "Awaiting analysis",
-          agent ? toneFromRiskLevel(agent.riskLevel) : "CAU",
-        )}</span>
-      </div>
-      <div class="incident-panel__row">
-        <span class="incident-panel__label">Primary watch</span>
-        <span class="incident-panel__value incident-panel__value--wrap">
-          ${
-            primaryFlag
-              ? `${escapeHtml(primaryFlag.zoneId)} ${escapeHtml(primaryFlag.stressType.replaceAll("_", " "))} (${escapeHtml(primaryFlag.severity)})`
-              : primaryChange
-                ? `${escapeHtml(primaryChange.field)} → ${escapeHtml(String(primaryChange.newValue))}`
-                : "No planner watch item raised."
-          }
-        </span>
-      </div>
-      ${
-        mission.activeScenario
-          ? renderNotice({
-              level: noticeFromTone(incidentTone),
-              title: "Scenario state",
-              children: `${mission.activeScenario.description} Affected zones: ${mission.activeScenario.affectedZoneIds.join(", ")}.`,
-            })
-          : renderNotice({
-              level: "ok",
-              title: "Operational state",
-              children:
-                "No injected failure scenario is active. Planner remains in monitoring mode and the dashboard is rendering the live mission snapshot.",
-            })
-      }
-      ${
-        agentAnalyzing
-          ? renderNotice({
-              level: "info",
-              title: "AI in progress",
-              children:
-                "AETHER is analyzing the latest mission change and refreshing the incident response forecast.",
-            })
-          : ""
-      }
-      ${
-        agent
-          ? renderNotice({
-              level: noticeFromTone(toneFromRiskLevel(agent.riskLevel)),
-              title: "AI explanation",
-              children: agent.explanation,
-            })
-          : ""
-      }
-      ${
-        agent
-          ? renderNotice({
-              level: "info",
-              title: "AI summary",
-              children: agent.riskSummary,
-            })
-          : ""
-      }
-      ${
-        agent
-          ? `
-              <div class="failure-realloc-col__rows">
-                <div class="failure-realloc-row">
-                  <span class="failure-realloc-row__label">Caloric coverage</span>
-                  <span class="failure-realloc-row__value mono">
-                    ${agent.comparison.before.caloricCoveragePercent}% → ${agent.comparison.after.caloricCoveragePercent}%
-                    (${formatSignedDelta(agent.comparison.delta.caloricCoverageDelta)} pts)
-                  </span>
-                </div>
-                <div class="failure-realloc-row">
-                  <span class="failure-realloc-row__label">Protein coverage</span>
-                  <span class="failure-realloc-row__value mono">
-                    ${agent.comparison.before.proteinCoveragePercent}% → ${agent.comparison.after.proteinCoveragePercent}%
-                    (${formatSignedDelta(agent.comparison.delta.proteinCoverageDelta)} pts)
-                  </span>
-                </div>
-                <div class="failure-realloc-row">
-                  <span class="failure-realloc-row__label">Nutrition score</span>
-                  <span class="failure-realloc-row__value mono">
-                    ${agent.comparison.before.nutritionalCoverageScore} → ${agent.comparison.after.nutritionalCoverageScore}
-                    (${formatSignedDelta(agent.comparison.delta.scoreDelta)} pts)
-                  </span>
-                </div>
-                <div class="failure-realloc-row">
-                  <span class="failure-realloc-row__label">Days safe</span>
-                  <span class="failure-realloc-row__value mono">
-                    ${agent.comparison.before.daysSafe} → ${agent.comparison.after.daysSafe}
-                    (${formatSignedDelta(agent.comparison.delta.daysSafeDelta)} d)
-                  </span>
-                </div>
-              </div>
-            `
-          : ""
-      }
-      ${
-        agent && agent.recommendedActions.length > 0
-          ? `
-              <div class="failure-realloc-col__rows">
-                ${agent.recommendedActions
-                  .slice(0, 3)
-                  .map(
-                    (action) => `
-                      <div class="failure-realloc-row">
-                        <span class="failure-realloc-row__label">
-                          ${escapeHtml(
-                            action.targetZoneId
-                              ? `${action.targetZoneId} · ${formatActionType(action.type)}`
-                              : formatActionType(action.type),
-                          )}
-                        </span>
-                        <span class="failure-realloc-row__value">
-                          ${renderStatusBadge(action.urgency, toneFromUrgency(action.urgency))}<br>
-                          ${escapeHtml(action.description)}
-                          ${
-                            Object.keys(action.parameterChanges).length > 0
-                              ? `<br><span class="mono">${escapeHtml(formatParameterChanges(action.parameterChanges))}</span>`
-                              : ""
-                          }
-                        </span>
-                      </div>
-                    `,
-                  )
-                  .join("")}
-              </div>
-            `
-          : ""
-      }
-    </div>
-  `;
-}
-
 function renderScenarioCard(
   scenario: BackendScenarioCatalogItem,
   mission: BackendMissionState,
@@ -4033,13 +3860,6 @@ function formatScenarioSeverity(severity: BackendScenarioSeverity): string {
   return severity.slice(0, 1).toUpperCase() + severity.slice(1);
 }
 
-function formatActionType(value: string): string {
-  return value
-    .split("_")
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function formatPlannerMode(mode: BackendPlannerOutput["mode"] | undefined): string {
   return (mode ?? "normal")
     .split("_")
@@ -4074,21 +3894,6 @@ function formatPlannerValue(value: string | number | boolean): string {
   return String(value);
 }
 
-function formatParameterChanges(parameterChanges: Record<string, number>): string {
-  return Object.entries(parameterChanges)
-    .slice(0, 4)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(" · ");
-}
-
-function formatSignedDelta(value: number): string {
-  if (value > 0) {
-    return `+${value}`;
-  }
-
-  return String(value);
-}
-
 function formatNutrientMixStatus(status: BackendMissionState["resources"]["nutrientMixStatus"]): string {
   return status.replaceAll("_", " ");
 }
@@ -4109,18 +3914,6 @@ function formatTimestamp(value: string): string {
   }
 
   return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}Z`;
-}
-
-function toneFromUrgency(urgency: BackendAgentAction["urgency"]): StatusTone {
-  if (urgency === "immediate") {
-    return "ABT";
-  }
-
-  if (urgency === "within_24h") {
-    return "CAU";
-  }
-
-  return "NOM";
 }
 
 function toneColor(tone: StatusTone): string {

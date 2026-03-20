@@ -3683,7 +3683,6 @@ code,
 .overview-micro-cell__label,
 .zone-sensor__label,
 .zone-ops-card__metric-label,
-.incident-panel__label,
 .overview-timeline-chip__meta {
   color: var(--text-2);
   font-family: var(--font-data);
@@ -3775,8 +3774,7 @@ code,
 }
 
 .zone-ops-card__head,
-.zone-sensor__head,
-.incident-panel__row {
+.zone-sensor__head {
   display: flex;
   align-items: start;
   justify-content: space-between;
@@ -3879,23 +3877,6 @@ code,
 .zone-sensor__value {
   color: var(--text-0);
   font-size: 11px;
-}
-
-.incident-panel {
-  display: grid;
-  gap: 10px;
-}
-
-.incident-panel__value {
-  color: var(--text-0);
-  font-size: 10px;
-  text-align: right;
-}
-
-.incident-panel__value--wrap {
-  max-width: 260px;
-  color: var(--text-1);
-  line-height: 1.5;
 }
 
 .page-intro {
