@@ -1856,6 +1856,22 @@ function renderAgent(
               </form>
             </div>
           </div>
+
+          <aside class="agent-voice-shell">
+            <div class="agent-voice-shell__header">
+              <p class="agent-voice-shell__label mono">Voice console</p>
+              <p class="agent-voice-shell__meta">Hands-free AETHER access for live mission narration and operator questions</p>
+            </div>
+            <div class="agent-voice-shell__body">
+              <div class="agent-voice-shell__note">
+                <span class="agent-voice-shell__status"></span>
+                <span>Voice agent linked to the same greenhouse knowledge base and companion persona</span>
+              </div>
+              <div class="agent-voice-shell__widget">
+                <elevenlabs-convai agent-id="agent_5001km474bcje2mba0yt1a9g1v4c"></elevenlabs-convai>
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
     </section>

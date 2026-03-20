@@ -132,7 +132,7 @@ _LOCAL_ANALYZE_TOOLS = [
 ]
 _LOCAL_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
 _LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
-OPS_MCP_URL = os.getenv("OPS_MCP_URL")
+OPS_MCP_URL = (os.getenv("OPS_MCP_URL", "http://127.0.0.1:9000/mcp") or "").strip() or None
 OPS_MCP_AUTH_TOKEN = os.getenv("OPS_MCP_AUTH_TOKEN")
 
 _RISK_LEVELS = {"low", "moderate", "high", "critical"}

@@ -38,7 +38,12 @@ def _parse_cors_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"[ai-service] starting — backend: {os.getenv('BACKEND_URL', 'http://localhost:3001')}")
+    print(
+        "[ai-service] starting — "
+        f"backend: {os.getenv('BACKEND_URL', 'http://localhost:3001')} — "
+        f"ops-mcp: {os.getenv('OPS_MCP_URL', 'http://127.0.0.1:9000/mcp')} — "
+        f"kb-mcp: {os.getenv('KB_MCP_URL', 'unset')}"
+    )
     yield
     print("[ai-service] shutdown")
 

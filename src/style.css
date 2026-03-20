@@ -1481,8 +1481,8 @@ code,
 
 .agent-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.85fr);
+  gap: 18px;
   width: 100%;
   align-items: stretch;
 }
@@ -1952,6 +1952,106 @@ code,
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.agent-voice-shell {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-height: 100%;
+  padding: 18px 18px 20px;
+  border: 1px solid rgba(61, 72, 112, 0.84);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top right, rgba(192, 120, 64, 0.12), transparent 34%),
+    radial-gradient(circle at top left, rgba(74, 127, 193, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 16%),
+    rgba(10, 14, 22, 0.94);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 18px 48px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(192, 120, 64, 0.04);
+}
+
+.agent-voice-shell__header {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-voice-shell__label {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 8px;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.agent-voice-shell__meta {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.agent-voice-shell__body {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-voice-shell__note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 1px solid rgba(61, 72, 112, 0.64);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 70%),
+    rgba(15, 19, 32, 0.82);
+  color: var(--text-1);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.agent-voice-shell__status {
+  flex: 0 0 9px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(111, 208, 255, 0.95) 0%, rgba(74, 127, 193, 0.94) 65%, rgba(74, 127, 193, 0.2) 100%);
+  box-shadow: 0 0 0 4px rgba(74, 127, 193, 0.12), 0 0 16px rgba(74, 127, 193, 0.36);
+}
+
+.agent-voice-shell__widget {
+  position: relative;
+  min-height: 540px;
+  padding: 12px;
+  border: 1px solid rgba(61, 72, 112, 0.7);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(74, 127, 193, 0.04), transparent 36%),
+    rgba(12, 16, 26, 0.92);
+  overflow: hidden;
+}
+
+.agent-voice-shell__widget::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(140deg, rgba(74, 127, 193, 0.08), transparent 44%),
+    linear-gradient(320deg, rgba(192, 120, 64, 0.08), transparent 38%);
+  pointer-events: none;
+}
+
+.agent-voice-shell__widget elevenlabs-convai {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 516px;
 }
 
 @keyframes agent-title-breathe {
@@ -4669,6 +4769,11 @@ code,
     border-radius: 18px;
   }
 
+  .agent-voice-shell {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
   .agent-uplink__body {
     grid-template-columns: 1fr;
   }
@@ -4686,6 +4791,10 @@ code,
 
   .agent-uplink__thread {
     max-height: none;
+  }
+
+  .agent-voice-shell__widget {
+    min-height: 480px;
   }
 
   .agent-uplink__message,
