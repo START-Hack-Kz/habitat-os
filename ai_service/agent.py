@@ -134,6 +134,7 @@ _LOCAL_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
 _LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS = [locateDashboardSection, searchKnowledgeBase]
 OPS_MCP_URL = (os.getenv("OPS_MCP_URL", "http://127.0.0.1:9000/mcp") or "").strip() or None
 OPS_MCP_AUTH_TOKEN = os.getenv("OPS_MCP_AUTH_TOKEN")
+OPS_MCP_REQUIRED = _get_env_bool("OPS_MCP_REQUIRED", False)
 
 _RISK_LEVELS = {"low", "moderate", "high", "critical"}
 
@@ -177,6 +178,16 @@ def _load_all_mcp_tools(mcp_client: MCPClient):
     return tools
 
 
+def _handle_ops_mcp_failure(exc: Exception, fallback_tools):
+    message = (
+        f"[agent] ops MCP unavailable ({type(exc).__name__}: {exc})"
+    )
+    if OPS_MCP_REQUIRED:
+        raise RuntimeError(f"{message}; OPS_MCP_REQUIRED is enabled") from exc
+    print(f"{message}, falling back to local tools")
+    return fallback_tools
+
+
 @contextmanager
 def _agent_tool_context():
     """
@@ -193,11 +204,7 @@ def _agent_tool_context():
             client.start()
             mcp_tools = _load_all_mcp_tools(client)
         except Exception as exc:
-            print(
-                f"[agent] ops MCP unavailable ({type(exc).__name__}: {exc}), "
-                "falling back to local operational tools"
-            )
-            yield _LOCAL_TOOLS
+            yield _handle_ops_mcp_failure(exc, _LOCAL_TOOLS)
             return
         yield [*mcp_tools, *_LOCAL_NON_OPERATIONAL_TOOLS]
     finally:
@@ -223,11 +230,7 @@ def _analyze_tool_context():
             client.start()
             mcp_tools = _load_all_mcp_tools(client)
         except Exception as exc:
-            print(
-                f"[agent] ops MCP unavailable ({type(exc).__name__}: {exc}), "
-                "falling back to local analyze tools"
-            )
-            yield _LOCAL_ANALYZE_TOOLS
+            yield _handle_ops_mcp_failure(exc, _LOCAL_ANALYZE_TOOLS)
             return
         yield [*mcp_tools, *_LOCAL_ANALYZE_NON_OPERATIONAL_TOOLS]
     finally:

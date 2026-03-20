@@ -7,6 +7,7 @@ operational state through an MCP endpoint instead of direct backend calls.
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
@@ -15,9 +16,24 @@ from mcp.server.fastmcp import FastMCP
 load_dotenv()
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3001")
-MCP_HOST = os.getenv("OPS_MCP_HOST", "0.0.0.0")
-MCP_PORT = int(os.getenv("OPS_MCP_PORT", "8000"))
-MCP_PATH = os.getenv("OPS_MCP_PATH", "/mcp")
+
+
+def _resolve_ops_binding() -> tuple[str, int, str]:
+    configured_url = (os.getenv("OPS_MCP_URL") or "").strip()
+    if configured_url:
+        parsed = urlparse(configured_url)
+        host = os.getenv("OPS_MCP_HOST") or parsed.hostname or "0.0.0.0"
+        port = int(os.getenv("OPS_MCP_PORT") or parsed.port or 8000)
+        path = os.getenv("OPS_MCP_PATH") or parsed.path or "/mcp"
+        return host, port, path
+
+    host = os.getenv("OPS_MCP_HOST", "0.0.0.0")
+    port = int(os.getenv("OPS_MCP_PORT", "8000"))
+    path = os.getenv("OPS_MCP_PATH", "/mcp")
+    return host, port, path
+
+
+MCP_HOST, MCP_PORT, MCP_PATH = _resolve_ops_binding()
 
 _client = httpx.Client(base_url=BACKEND_URL, timeout=10.0)
 
