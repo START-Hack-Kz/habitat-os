@@ -12,7 +12,7 @@ import {
   createPlannerOutput,
   detectNutritionRisk,
 } from "../mission/mission.monitoring";
-import { setMissionState } from "../mission/mission.store";
+import { persistMissionState, setMissionState } from "../mission/mission.store";
 import { buildPlantInterventionEvents } from "../plants/plant.service";
 import type {
   CropType,
@@ -578,6 +578,15 @@ export function injectScenario(input: ScenarioInjectRequest): PlannerOutput {
   const beforeState = getCurrentMissionSnapshot();
   const output = createScenarioInjectionOutput(beforeState, input);
   setMissionState(output.missionState);
+  return output;
+}
+
+export async function injectScenarioPersisted(
+  input: ScenarioInjectRequest,
+): Promise<PlannerOutput> {
+  const beforeState = getCurrentMissionSnapshot();
+  const output = createScenarioInjectionOutput(beforeState, input);
+  await persistMissionState(output.missionState);
   return output;
 }
 

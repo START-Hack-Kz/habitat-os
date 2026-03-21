@@ -2,6 +2,7 @@ import fastifyCors from "@fastify/cors";
 import Fastify from "fastify";
 import { agentRoutes } from "./routes/agent";
 import { healthRoutes } from "./routes/health";
+import { hydrateMissionState } from "./modules/mission/mission.store";
 import { missionRoutes } from "./routes/mission";
 import { plannerRoutes } from "./routes/planner";
 import { plantRoutes } from "./routes/plants";
@@ -31,6 +32,10 @@ function isAllowedOrigin(origin: string | undefined, allowedOrigins: string[]): 
     return true;
   }
 
+  if (allowedOrigins.includes("*")) {
+    return true;
+  }
+
   try {
     const url = new URL(origin);
     if (
@@ -49,6 +54,16 @@ function isAllowedOrigin(origin: string | undefined, allowedOrigins: string[]): 
 export function buildApp() {
   const app = Fastify();
   const allowedOrigins = getAllowedOrigins();
+
+  app.addHook("onRequest", async (request) => {
+    const requestPath = request.raw.url ?? "";
+
+    if (request.method === "OPTIONS" || requestPath.startsWith("/health")) {
+      return;
+    }
+
+    await hydrateMissionState(true);
+  });
 
   void app.register(fastifyCors, {
     origin(origin, callback) {

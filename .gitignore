@@ -21,3 +21,6 @@ ai_service/__pycache__/
 
 # Local knowledge base drafts / voice-agent KB
 docs/kb/
+
+# AWS build artifacts
+.aws-build/

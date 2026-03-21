@@ -7,6 +7,7 @@
     "dev": "vite",
     "backend:dev": "tsx watch --tsconfig backend/tsconfig.json backend/src/server.ts",
     "backend:start": "tsx --tsconfig backend/tsconfig.json backend/src/server.ts",
+    "backend:build:lambda": "esbuild backend/src/lambda.ts --bundle --platform=node --target=node20 --format=cjs --outfile=.aws-build/backend/index.js",
     "build": "vite build",
     "preview": "vite preview",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -27,6 +28,9 @@
     "vite": "^7.1.11"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1013.0",
+    "@aws-sdk/lib-dynamodb": "^3.1013.0",
+    "@fastify/aws-lambda": "^6.4.0",
     "@fastify/cors": "^11.2.0",
     "aws-amplify": "^6.16.3",
     "dotenv": "^17.2.3",

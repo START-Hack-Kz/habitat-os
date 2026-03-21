@@ -49,6 +49,7 @@ The project is split into four main parts.
 ### 2. Backend
 - Fastify + TypeScript
 - source of truth for mission state, scenarios, sensors, planner results, and nutrition math
+- supports optional DynamoDB persistence for deployed mission state
 
 ### 3. AI Service
 - FastAPI + Python
@@ -159,6 +160,46 @@ OPS_MCP_URL=http://127.0.0.1:9000/mcp
 AI_MAX_TOKENS=5000
 AI_TEMPERATURE=0.2
 ```
+
+Optional backend persistence setup:
+
+```env
+MISSION_STATE_TABLE=habitat-os-mission-state
+MISSION_STATE_KEY=mars-greenhouse-alpha
+AWS_REGION=us-west-2
+```
+
+If `MISSION_STATE_TABLE` is not set, the backend keeps using the local in-memory mission seed.
+
+## Database
+
+The backend can now persist the full mission snapshot into DynamoDB.
+
+Use a table with:
+
+- table name: `habitat-os-mission-state`
+- partition key: `missionId` (String)
+
+Create it:
+
+```bash
+aws dynamodb create-table \
+  --region us-west-2 \
+  --table-name habitat-os-mission-state \
+  --attribute-definitions AttributeName=missionId,AttributeType=S \
+  --key-schema AttributeName=missionId,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST
+```
+
+Wait until it is active:
+
+```bash
+aws dynamodb wait table-exists \
+  --region us-west-2 \
+  --table-name habitat-os-mission-state
+```
+
+The backend stores one item per mission key. For the current app, that item contains the entire `MissionState` JSON blob, so resets, scenario injections, sensor tweaks, plant decisions, and AI auto-apply actions survive Lambda cold starts.
 
 ## How To Run
 

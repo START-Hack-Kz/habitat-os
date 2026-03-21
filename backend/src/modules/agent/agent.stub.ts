@@ -2,7 +2,7 @@ import { CROP_PROFILES } from "../../data/cropProfiles.data";
 import { SCENARIO_CATALOG } from "../../data/scenarios.data";
 import type { AgentAnalyzeRequest } from "../../schemas/agent.schema";
 import { buildMissionSnapshot, getCurrentMissionSnapshot } from "../mission/mission.service";
-import { getMissionState, setMissionState } from "../mission/mission.store";
+import { getMissionState, persistMissionState, setMissionState } from "../mission/mission.store";
 import type { MissionState } from "../mission/mission.types";
 import { buildPlantInterventionEvents } from "../plants/plant.service";
 import { createNutritionPreservationExecution } from "../planner/planner.service";
@@ -430,6 +430,19 @@ export function analyzeCurrentMissionWithStub(
 
   if (analysis.nextState !== null) {
     setMissionState(analysis.nextState);
+  }
+
+  return analysis.response;
+}
+
+export async function analyzeCurrentMissionWithPersistence(
+  request: AgentAnalyzeRequest = {},
+): Promise<AIDecision> {
+  const currentState = getCurrentMissionSnapshot();
+  const analysis = createAgentAnalysis(currentState, request);
+
+  if (analysis.nextState !== null) {
+    await persistMissionState(analysis.nextState);
   }
 
   return analysis.response;

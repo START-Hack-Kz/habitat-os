@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { analyzeCurrentMissionWithStub } from "../modules/agent/agent.stub";
+import { analyzeCurrentMissionWithPersistence } from "../modules/agent/agent.stub";
 import { agentAnalyzeRequestSchema } from "../schemas/agent.schema";
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
@@ -13,6 +13,6 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    return analyzeCurrentMissionWithStub(parsed.data);
+    return analyzeCurrentMissionWithPersistence(parsed.data);
   });
 };

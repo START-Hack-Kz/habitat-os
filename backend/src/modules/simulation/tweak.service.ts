@@ -1,5 +1,5 @@
 import { buildMissionSnapshot, getCurrentMissionSnapshot } from "../mission/mission.service";
-import { setMissionState } from "../mission/mission.store";
+import { persistMissionState } from "../mission/mission.store";
 import type { MissionState } from "../mission/mission.types";
 import { buildPlantInterventionEvents } from "../plants/plant.service";
 import type { SimulationTweakRequest } from "../../schemas/simulation.schema";
@@ -109,9 +109,9 @@ export function applySimulationTweak(
   return buildMissionSnapshot(nextState);
 }
 
-export function tweakCurrentMission(
+export async function tweakCurrentMission(
   request: SimulationTweakRequest,
-): MissionState {
+): Promise<MissionState> {
   const nextState = applySimulationTweak(getCurrentMissionSnapshot(), request);
-  return setMissionState(nextState);
+  return persistMissionState(nextState);
 }

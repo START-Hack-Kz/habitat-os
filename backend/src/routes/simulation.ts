@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { getCurrentMissionSnapshot } from "../modules/mission/mission.service";
-import { resetMissionState } from "../modules/mission/mission.store";
-import { injectScenario } from "../modules/scenarios/scenario.service";
+import { resetMissionStatePersisted } from "../modules/mission/mission.store";
+import { injectScenarioPersisted } from "../modules/scenarios/scenario.service";
 import { tweakCurrentMission } from "../modules/simulation/tweak.service";
 import {
   scenarioInjectRequestSchema,
@@ -20,7 +20,7 @@ export const simulationRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    return injectScenario(parsed.data);
+    return injectScenarioPersisted(parsed.data);
   });
 
   app.post("/api/simulation/reset", async (request, reply) => {
@@ -33,7 +33,7 @@ export const simulationRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    resetMissionState();
+    await resetMissionStatePersisted();
     return getCurrentMissionSnapshot();
   });
 

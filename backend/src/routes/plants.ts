@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { getMissionState, setMissionState } from "../modules/mission/mission.store";
+import { getMissionState, persistMissionState } from "../modules/mission/mission.store";
 import { applyPlantDecision, triggerPlantHealthCheck } from "../modules/plants/plant.service";
 import {
   plantDecisionApplyRequestSchema,
@@ -18,7 +18,7 @@ export const plantRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const nextState = triggerPlantHealthCheck(getMissionState(), parsed.data);
-    return setMissionState(nextState);
+    return persistMissionState(nextState);
   });
 
   app.post("/api/plants/decision/apply", async (request, reply) => {
@@ -32,6 +32,6 @@ export const plantRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const nextState = applyPlantDecision(getMissionState(), parsed.data);
-    return setMissionState(nextState);
+    return persistMissionState(nextState);
   });
 };
